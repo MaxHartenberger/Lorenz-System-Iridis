@@ -26,18 +26,17 @@ echo ""
 
 # --- 1. Load Julia -----------------------------------------------------------
 echo "[1/3] Loading Julia module..."
+echo "  Available Julia modules:"
+module avail julia 2>&1 | grep -i julia || true
+echo ""
+echo "  Attempting to load julia/1.10 ..."
 if module load julia/1.10 2>/dev/null; then
     echo "  Loaded: $(which julia)"
     julia --version
 else
-    echo "  WARNING: Could not load 'julia/1.10'. Trying system Julia..."
-    if command -v julia &>/dev/null; then
-        echo "  Using: $(which julia)"
-        julia --version
-    else
-        echo "  ERROR: Julia not found. Load a Julia module or check your PATH."
-        exit 1
-    fi
+    echo "  ERROR: Could not load Julia module 'julia/1.10'."
+    echo "  Check available versions above and update this script or the .slurm files."
+    exit 1
 fi
 echo ""
 

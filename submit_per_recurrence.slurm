@@ -9,15 +9,16 @@
 # Array size = total number of recurrences across all T values.
 #
 # PREREQUISITES:
-#   1. module load julia/1.10
-#   2. julia scripts/generate_rec_task_list.jl --output rec_tasks.txt
+#   1. module avail julia               # check available versions
+#   2. module load julia/1.10
+#   3. julia scripts/generate_rec_task_list.jl --output rec_tasks.txt
 #
 # USAGE:
 #   sbatch --array=1-<N> submit_per_recurrence.slurm
 # ============================================================================ #
 
 # ---------------------------------------------------------------------------- #
-# SLURM directives
+# SLURM directives  (must have "#SBATCH" starting in column 1)
 # ---------------------------------------------------------------------------- #
 #SBATCH --job-name=lorenz-rec
 #SBATCH --output=logs/rec_slurm_%A_%a.out
@@ -26,21 +27,27 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8                        # Julia threads for (N,m) parallelism
 #SBATCH --mem=8000                               # 8 GB RAM
-#SBATCH --time=12:00:00                          # 12 hours per recurrence
+#SBATCH --time=12:00:00                          # 12 h per recurrence
 #SBATCH --partition=batch
 
 # ---------------------------------------------------------------------------- #
 # Environment setup
 # ---------------------------------------------------------------------------- #
-module load julia/1.10  2>/dev/null || echo "WARNING: Could not load julia module"
+# Load Julia — run "module avail julia" on the login node to see versions.
+module load julia/1.10
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to load Julia module 'julia/1.10'."
+    echo "       Run 'module avail julia' on the login node to check versions."
+    exit 2
+fi
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$PROJECT_ROOT" || exit 1
+cd "$PROJECT_ROOT" || exit 2
 mkdir -p logs
 
-# Set Julia threads to match SLURM allocation
+# Tell Julia how many threads to use (matches SLURM allocation)
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
-echo "Using ${JULIA_NUM_THREADS} Julia threads"
+echo "Julia threads:   ${JULIA_NUM_THREADS} (from SLURM_CPUS_PER_TASK)"
 
 # ---------------------------------------------------------------------------- #
 # Read parameters for this array task
@@ -49,18 +56,29 @@ TASK_LIST="rec_tasks.txt"
 
 if [ ! -f "$TASK_LIST" ]; then
     echo "ERROR: Task list '$TASK_LIST' not found."
-    echo "Run:  julia scripts/generate_rec_task_list.jl --output rec_tasks.txt"
-    exit 1
+    echo "       Run:  julia scripts/generate_rec_task_list.jl --output rec_tasks.txt"
+    exit 2
 fi
 
 TOTAL_TASKS=$(wc -l < "$TASK_LIST")
 if [ "$SLURM_ARRAY_TASK_ID" -gt "$TOTAL_TASKS" ]; then
-    echo "WARNING: Array task ID $SLURM_ARRAY_TASK_ID exceeds task list ($TOTAL_TASKS)."
+    echo "WARNING: Array task ID $SLURM_ARRAY_TASK_ID > task list ($TOTAL_TASKS)."
+    echo "         Nothing to do — exiting."
     exit 0
 fi
 
 PARAMS=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$TASK_LIST")
-read -r T REC_ID <<< "$PARAMS"
+
+# Parse space-separated fields:  T  rec_id
+set -- $PARAMS
+T="$1"
+REC_ID="$2"
+
+if [ -z "$T" ] || [ -z "$REC_ID" ]; then
+    echo "ERROR: Failed to parse parameters from line $SLURM_ARRAY_TASK_ID of $TASK_LIST"
+    echo "       Raw line: $PARAMS"
+    exit 2
+fi
 
 echo "=============================================="
 echo "SLURM Job ID:    ${SLURM_JOB_ID}"
@@ -72,8 +90,10 @@ echo "Node:            $(hostname)"
 echo "=============================================="
 echo ""
 
-# Run the multi-threaded worker for this recurrence
-julia scripts/hpc_worker_per_rec.jl "$T" "$REC_ID"
+# Run the multi-threaded worker for this recurrence.
+# We pass -t explicitly so Julia knows the thread count even if the env
+# variable isn't picked up by the launcher.
+julia -t "$SLURM_CPUS_PER_TASK" scripts/hpc_worker_per_rec.jl "$T" "$REC_ID"
 
 EXIT_CODE=$?
 
