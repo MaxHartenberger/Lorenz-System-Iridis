@@ -225,7 +225,7 @@ function run_one_case(rec_id::Int, N::Int, m::Int,
         dz_norm_tol      = 0.0,              # disabled — rely on e_norm_tol only
         e_norm_tol       = 1e-8,             # ‖F(z)‖ < 1e-8  ⇒ convergence
         verbose          = false,
-        ls_maxiter       = 100,              # max backtracking steps per line search
+        ls_maxiter       = 30,              # max backtracking steps per line search
         lbfgs_memory     = m,                # number of (s, y) pairs stored
         lbfgs_adj_system = Ls_adj,           # adjoint system for gradient computation
         callback         = cb,
@@ -285,8 +285,8 @@ function main()
     T_targets      = [5.0, 10.0, 20.0, 40.0, 80.0, 160.0]   # target orbit periods
     Ms             = [5, 10, 20, 40, 80, 160, 320]            # L-BFGS memory sizes
     Ns             = [5, 10, 20, 40, 80, 160, 320]                # number of shooting segments
-    maxiter        = 100000                              # max L-BFGS iterations per case
-    max_recs       = 10                                 # max recurrences processed per T
+    maxiter        = 1000000                              # max L-BFGS iterations per case
+    max_recs       = 100                                 # max recurrences processed per T
                                                         # (set to typemax(Int) for all)
 
     # --- Paths ----------------------------------------------------------------
