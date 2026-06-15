@@ -107,6 +107,26 @@ function main()
     println("="^60)
     println("  Task list written to:  $output_file")
     println("  Total tasks:           $total_tasks")
+
+    # Warn if exceeds typical SLURM MaxArraySize (1001 on Iridis)
+    const SLURM_MAX_ARRAY = 1001
+    if total_tasks > SLURM_MAX_ARRAY
+        println()
+        println("  ⚠ WARNING: $total_tasks tasks exceeds SLURM MaxArraySize ($SLURM_MAX_ARRAY).")
+        println("    You CANNOT submit this as a single job array.")
+        println()
+        println("    Options:")
+        println("      A) Use the per-recurrence strategy instead:")
+        println("           julia scripts/generate_rec_task_list.jl --output rec_tasks.txt")
+        println("           sbatch --array=1-\$(wc -l < rec_tasks.txt) submit_per_recurrence.slurm")
+        println("      B) Split into chunks of $SLURM_MAX_ARRAY:")
+        for chunk_start in 1:SLURM_MAX_ARRAY:total_tasks
+            chunk_end = min(chunk_start + SLURM_MAX_ARRAY - 1, total_tasks)
+            println("           sbatch --array=$chunk_start-$chunk_end submit_sweep.slurm")
+        end
+        println()
+    end
+
     println()
     println("  Breakdown by T:")
     for T in T_targets
@@ -116,8 +136,10 @@ function main()
         end
     end
     println()
-    println("  Submit with:")
-    println("    sbatch --array=1-$total_tasks submit_sweep.slurm")
+    if total_tasks <= SLURM_MAX_ARRAY
+        println("  Submit with:")
+        println("    sbatch --array=1-$total_tasks submit_sweep.slurm")
+    end
     println("="^60)
 end
 

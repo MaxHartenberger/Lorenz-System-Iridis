@@ -1,6 +1,6 @@
 # L-BFGS Periodic Orbit Search — Lorenz System
 
-## HPC (Iridis 5) Usage Guide
+## HPC (Iridis) Usage Guide
 
 This project searches for periodic orbits of the Lorenz system using L-BFGS
 optimisation over shooting segments.  The parameter sweep is **embarrassingly
@@ -8,18 +8,39 @@ parallel** — every `(T, rec_id, N, m)` combination is independent.
 
 ---
 
+## ⚠️ Filesystem Quota Warning
+
+| Limit | `/home` |
+|-------|---------|
+| Soft data | 110 GB |
+| Hard data | 130 GB |
+| Soft inodes | **160,000** |
+| Hard inodes | **200,000** |
+
+The fine-grained sweep produces **~20,000–30,000 CSV files** per full run
+(6 T values × 60–100 recurrences × 49 (N,m) combos).  That is ~15 % of your
+entire inode quota in `/home`.  **Always send output to `/scratch`** (see below).
+
+---
+
 ## Quick Start (recommended workflow)
+
+**Iridis `MaxArraySize = 1001`.**  The per-recurrence strategy (577 tasks) fits;
+the fine-grained strategy (28,273 tasks) does not.
 
 ```bash
 # 1. Load Julia on the login node
 module load julia/1.10
 
-# 2. Generate the task list
-julia scripts/generate_task_list.jl --output tasks.txt
+# 2. Generate the recurrence-level task list (~577 tasks)
+julia scripts/generate_rec_task_list.jl --output rec_tasks.txt
 
-# 3. Submit the job array  (N = number of lines in tasks.txt)
-sbatch --array=1-<N> submit_sweep.slurm
+# 3. Submit the job array  (N = number of lines in rec_tasks.txt)
+sbatch --array=1-<N> submit_per_recurrence.slurm
 ```
+
+Each array task gets 8 CPUs and runs all 49 (N,m) combinations for one
+recurrence in parallel via Julia threads.
 
 ---
 
@@ -52,36 +73,36 @@ Lorenz-System-Iridis/
 
 ## Two Submission Strategies
 
-### Strategy A: Fine-grained (one task per `(T, rec_id, N, m)`)
+### Strategy A: Per-recurrence (recommended ✓) — one task per `(T, rec_id)`
 
 | Pro | Con |
 |-----|-----|
-| Max parallelism — every case runs independently | Julia startup overhead per task (~30 s compilation) |
-| Task failure isolates one case | Many small tasks (thousands) |
-| Easy to re-submit failed cases | |
+| **Fits in 1001 array limit** (577 tasks) | Needs 8 CPUs per task |
+| Julia compiles once per recurrence, runs 49 combos in threads | |
+| Few SLURM tasks to manage | |
 
-**Use when:** You have many nodes available and want minimum wall-clock time.
-
-```bash
-julia scripts/generate_task_list.jl --output tasks.txt
-# Suppose tasks.txt has 4116 lines:
-sbatch --array=1-4116 submit_sweep.slurm
-```
-
-### Strategy B: Coarse-grained (one task per `(T, rec_id)`, Julia threads for `(N, m)`)
-
-| Pro | Con |
-|-----|-----|
-| Lower overhead — Julia compiles once per task | Needs multi-threaded Julia |
-| Fewer SLURM tasks to manage | If a task fails, you lose all (N,m) for that recurrence |
-| Better CPU utilisation | |
-
-**Use when:** You have fewer nodes, want to use multi-core within each node.
+**This is the only strategy that works as a single job array on Iridis.**
 
 ```bash
 julia scripts/generate_rec_task_list.jl --output rec_tasks.txt
-# Suppose rec_tasks.txt has 300 lines (one per recurrence):
-sbatch --array=1-300 submit_per_recurrence.slurm
+# Prints: Total tasks: 577
+sbatch --array=1-577 submit_per_recurrence.slurm
+```
+
+### Strategy B: Fine-grained (use only for small subsets) — one task per `(T, rec_id, N, m)`
+
+| Pro | Con |
+|-----|-----|
+| Max parallelism | 28,273 tasks — **exceeds MaxArraySize=1001** |
+| Task failure isolates one case | Must split into 29 separate submissions |
+| Easy to re-submit failed cases | Julia startup overhead per task |
+
+```bash
+julia scripts/generate_task_list.jl --output tasks.txt
+# Must submit in chunks of ≤1000:
+sbatch --array=1-1000    submit_sweep.slurm
+sbatch --array=1001-2000  submit_sweep.slurm
+# ... etc
 ```
 
 ---
@@ -134,13 +155,38 @@ sbatch --array=5,12,33 submit_sweep.slurm
 
 ## Custom Output / Scratch Directory
 
-To write output to `/scratch` (faster, recommended for large runs):
+**Always use `/scratch` to avoid exhausting your `/home` inode quota.**
+
+A full sweep creates ~20,000–30,000 small CSV files, consuming ~15 % of your
+`/home` inode limit (160K).  `/scratch` has no inode quota and is the correct
+place for bulk job output.
+
+Edit `submit_sweep.slurm` (or `submit_per_recurrence.slurm`) and add
+`--output-dir` to the Julia invocation:
 
 ```bash
-# Edit submit_sweep.slurm and change the julia invocation to:
 julia scripts/hpc_worker.jl "$T" "$REC_ID" "$N" "$M" \
     --output-dir /scratch/$USER/lorenz-output
 ```
+
+After the run, copy only the files you need back to `/home` for analysis:
+
+```bash
+cp -r /scratch/$USER/lorenz-output ~/lorenz-results/
+# Or selectively:
+rsync -av --include='*/' --include='*CONVERGED*' --exclude='*' \
+    /scratch/$USER/lorenz-output/ ~/lorenz-converged-only/
+```
+
+### Inode budget per run
+
+| Strategy | CSV files | Log files | Total inodes | % of 160K limit |
+|----------|-----------|-----------|-------------|-----------------|
+| Fine-grained (per `(T,rec,N,m)`) | ~25,000 | ~25,000 | ~50,000 | **31 %** |
+| Coarse-grained (per `(T,rec)`) | ~25,000 | ~400 | ~25,400 | **16 %** |
+
+These are upper-bound estimates (6 T × 85 recs × 49 combos).  Reduce `max_recs`
+in `generate_task_list.jl` to lower the count.
 
 ---
 
@@ -176,19 +222,23 @@ See the [Iridis wiki](https://sotonac.sharepoint.com/teams/HPCCommunityWiki/Site
 
 ## Cautions
 
-1. **Julia module availability**: Run `module avail julia` on the login node to
-   see which Julia versions are installed.  Update `submit_sweep.slurm` accordingly.
+1. **Filesystem quotas**: A full sweep generates tens of thousands of small CSV
+   files.  Do **not** write output to `/home` — you will exhaust your inode quota
+   (160K soft / 200K hard).  Always use `/scratch/$USER/...` via `--output-dir`.
 
-2. **Package dependencies**: This project depends on `Flows`, `NKSearch`,
+2. **Julia module availability**: Run `module avail julia` on the login node to
+   see which Julia versions are installed.  Update `submit_sweep.slurm` and
+   `submit_per_recurrence.slurm` with the correct version.
+
+3. **Package dependencies**: This project depends on `Flows`, `NKSearch`,
    `StreamingRecurrenceAnalysis`, and `ToySystems`.  These must be available
    in your Julia `LOAD_PATH` or installed as a local project.  Consider creating a
    `Project.toml` at the project root and running `julia --project -e 'using Pkg; Pkg.instantiate()'`
    on the login node before submitting.
 
-3. **Disk I/O**: All tasks write to the same output directory.  The per-task CSV
-   files are small, but with thousands of tasks the filesystem may become a
-   bottleneck.  Consider using `/scratch` for output during runs.
+4. **Scratch cleanup**: `/scratch` is not backed up and old files may be purged.
+   Copy important results back to `/home` after each run.
 
-4. **Memory**: Each L-BFGS case with large N and m uses more memory.  The default
+5. **Memory**: Each L-BFGS case with large N and m uses more memory.  The default
    2 GB per task is generous for moderate (N, m).  For large N (≥ 160), you may
    need 4–8 GB.
