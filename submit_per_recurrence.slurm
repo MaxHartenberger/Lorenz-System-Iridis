@@ -1,0 +1,83 @@
+#!/bin/bash
+# ============================================================================ #
+# SLURM Job Array (per-recurrence) — L-BFGS Periodic Orbit Search
+#
+# Each array task handles ONE recurrence (all N × m combinations) using
+# Julia multi-threading.  This has lower overhead than one-task-per-(N,m)
+# when you have many N,m combinations and Julia compilation is significant.
+#
+# Array size = total number of recurrences across all T values.
+#
+# PREREQUISITES:
+#   1. module load julia/1.10
+#   2. julia scripts/generate_rec_task_list.jl --output rec_tasks.txt
+#
+# USAGE:
+#   sbatch --array=1-<N> submit_per_recurrence.slurm
+# ============================================================================ #
+
+# ---------------------------------------------------------------------------- #
+# SLURM directives
+# ---------------------------------------------------------------------------- #
+#SBATCH --job-name=lorenz-rec
+#SBATCH --output=logs/rec_slurm_%A_%a.out
+#SBATCH --error=logs/rec_slurm_%A_%a.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8                        # Julia threads for (N,m) parallelism
+#SBATCH --mem=8000                               # 8 GB RAM
+#SBATCH --time=12:00:00                          # 12 hours per recurrence
+#SBATCH --partition=batch
+
+# ---------------------------------------------------------------------------- #
+# Environment setup
+# ---------------------------------------------------------------------------- #
+module load julia/1.10  2>/dev/null || echo "WARNING: Could not load julia module"
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT" || exit 1
+mkdir -p logs
+
+# Set Julia threads to match SLURM allocation
+export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
+echo "Using ${JULIA_NUM_THREADS} Julia threads"
+
+# ---------------------------------------------------------------------------- #
+# Read parameters for this array task
+# ---------------------------------------------------------------------------- #
+TASK_LIST="rec_tasks.txt"
+
+if [ ! -f "$TASK_LIST" ]; then
+    echo "ERROR: Task list '$TASK_LIST' not found."
+    echo "Run:  julia scripts/generate_rec_task_list.jl --output rec_tasks.txt"
+    exit 1
+fi
+
+TOTAL_TASKS=$(wc -l < "$TASK_LIST")
+if [ "$SLURM_ARRAY_TASK_ID" -gt "$TOTAL_TASKS" ]; then
+    echo "WARNING: Array task ID $SLURM_ARRAY_TASK_ID exceeds task list ($TOTAL_TASKS)."
+    exit 0
+fi
+
+PARAMS=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$TASK_LIST")
+read -r T REC_ID <<< "$PARAMS"
+
+echo "=============================================="
+echo "SLURM Job ID:    ${SLURM_JOB_ID}"
+echo "Array Task ID:   ${SLURM_ARRAY_TASK_ID} / ${TOTAL_TASKS}"
+echo "Parameters:      T=${T}, rec_id=${REC_ID}"
+echo "Julia threads:   ${JULIA_NUM_THREADS}"
+echo "Started at:      $(date)"
+echo "Node:            $(hostname)"
+echo "=============================================="
+echo ""
+
+# Run the multi-threaded worker for this recurrence
+julia scripts/hpc_worker_per_rec.jl "$T" "$REC_ID"
+
+EXIT_CODE=$?
+
+echo ""
+echo "Finished at:     $(date)"
+echo "Exit code:       ${EXIT_CODE}"
+exit $EXIT_CODE

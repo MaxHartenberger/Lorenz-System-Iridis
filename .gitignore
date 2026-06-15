@@ -1,0 +1,27 @@
+# ============================================================================ #
+# .gitignore — L-BFGS Periodic Orbit Search (Lorenz System)
+# ============================================================================ #
+
+# --- Generated / runtime artefacts ----------------------------------------- #
+/output/
+/plots/
+/logs/
+tasks.txt
+rec_tasks.txt
+
+# --- Julia artefacts -------------------------------------------------------- #
+/Manifest.toml
+*.jl.*.cov
+*.jl.mem
+
+# --- OS / editor ------------------------------------------------------------ #
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+\#*\#
+.vscode/
+
+# --- Exclude legacy / scratch scripts --------------------------------------- #
+/scripts/old/
