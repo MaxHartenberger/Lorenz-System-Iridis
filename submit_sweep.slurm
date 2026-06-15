@@ -31,7 +31,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2000                               # 2 GB RAM per task
 #SBATCH --time=04:00:00                          # 4 h per task (adjust as needed)
-#SBATCH --partition=batch
+#SBATCH --partition=amd_student
 
 # ---------------------------------------------------------------------------- #
 # Environment setup

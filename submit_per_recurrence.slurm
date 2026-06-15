@@ -28,7 +28,7 @@
 #SBATCH --cpus-per-task=8                        # Julia threads for (N,m) parallelism
 #SBATCH --mem=8000                               # 8 GB RAM
 #SBATCH --time=12:00:00                          # 12 h per recurrence
-#SBATCH --partition=batch
+#SBATCH --partition=amd_student
 
 # ---------------------------------------------------------------------------- #
 # Environment setup
