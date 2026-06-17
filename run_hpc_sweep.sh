@@ -29,12 +29,12 @@ echo "[1/3] Loading Julia module..."
 echo "  Available Julia modules:"
 module avail julia 2>&1 | grep -i julia || true
 echo ""
-echo "  Attempting to load julia/1.10 ..."
-if module load julia/1.10 2>/dev/null; then
+echo "  Attempting to load julia/1.12.4 (default on Iridis) ..."
+if module load julia/1.12.4 2>/dev/null; then
     echo "  Loaded: $(which julia)"
     julia --version
 else
-    echo "  ERROR: Could not load Julia module 'julia/1.10'."
+    echo "  ERROR: Could not load Julia module 'julia/1.12.4'."
     echo "  Check available versions above and update this script or the .slurm files."
     exit 1
 fi

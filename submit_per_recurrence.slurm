@@ -34,14 +34,17 @@
 # Environment setup
 # ---------------------------------------------------------------------------- #
 # Load Julia — run "module avail julia" on the login node to see versions.
-module load julia/1.10
+module load julia/1.12.4
 if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to load Julia module 'julia/1.10'."
+    echo "ERROR: Failed to load Julia module 'julia/1.12.4'."
     echo "       Run 'module avail julia' on the login node to check versions."
     exit 2
 fi
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Project root — use SLURM_SUBMIT_DIR (the directory you ran sbatch from).
+# ${BASH_SOURCE[0]} doesn't work on compute nodes because sbatch copies the
+# script to a temp location.
+PROJECT_ROOT="$SLURM_SUBMIT_DIR"
 cd "$PROJECT_ROOT" || exit 2
 mkdir -p logs
 
