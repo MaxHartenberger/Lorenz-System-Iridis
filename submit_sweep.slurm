@@ -7,7 +7,7 @@
 #
 # PREREQUISITES (run BEFORE submitting on the login node):
 #   1. module avail julia              # check which Julia versions exist
-#   2. module load julia/1.10           # (or whichever version is available)
+#   2. module load julia/1.12.4         # (or whichever version is available)
 #   3. julia scripts/generate_task_list.jl --output tasks.txt
 #
 # USAGE:

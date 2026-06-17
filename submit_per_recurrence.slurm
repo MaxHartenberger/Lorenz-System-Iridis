@@ -10,7 +10,7 @@
 #
 # PREREQUISITES:
 #   1. module avail julia               # check available versions
-#   2. module load julia/1.10
+#   2. module load julia/1.12.4
 #   3. julia scripts/generate_rec_task_list.jl --output rec_tasks.txt
 #
 # USAGE:
@@ -25,8 +25,8 @@
 #SBATCH --error=logs/rec_slurm_%A_%a.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8                        # Julia threads for (N,m) parallelism
-#SBATCH --mem=8000                               # 8 GB RAM
+#SBATCH --cpus-per-task=4                        # max for amd_student partition (4 cores)
+#SBATCH --mem=3500                               # 3.5 GB (partition limit: 3.75 GB)
 #SBATCH --time=12:00:00                          # 12 h per recurrence
 #SBATCH --partition=amd_student
 
