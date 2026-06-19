@@ -139,10 +139,26 @@ function run_one_case(T::Float64, rec_id::Int, N::Int, m::Int,
     end
     z0 = MVector((copy.(z0_seeds)...,), T_guess)
 
-    # Deep-copy flows for isolation
+    # Deep-copy flows for isolation — each segment must own its mutable state.
+    # Named callable structs (LorenzLin, etc.) deepcopy correctly unlike lambdas.
     Gs     = ntuple(_ -> deepcopy(ϕ), N)
     Ls     = ntuple(_ -> deepcopy(L_flow), N)
     Ls_adj = ntuple(_ -> deepcopy(L_adj_flow), N)
+
+    # --- Assert segment isolation (data-race guard) ---
+    if N >= 2
+        @assert Gs[1].sys.g !== Gs[2].sys.g """
+        Gs segments share the same RHS — data race!
+        Use named callable structs (e.g. TangentSystem, LorenzLin),
+        not closures/lambdas, when constructing flows for parallel use.
+        """
+        @assert Ls[1].sys.g !== Ls[2].sys.g """
+        Ls segments share the same tangent system — data race!
+        """
+        @assert Ls_adj[1].sys.g !== Ls_adj[2].sys.g """
+        Ls_adj segments share the same adjoint system — data race!
+        """
+    end
 
     # History buffers
     history_iter      = Int[]
@@ -238,14 +254,14 @@ function main()
 
     # Print header
     println("="^72)
-    println("  HPC Worker — Per-Recurrence (multi-threaded)")
+    println("  HPC Worker — Per-Recurrence (sequential)")
     println("  T        = $T")
     println("  rec_id   = $rec_id")
     println("  T_guess  = $T_guess")
     println("  u_rec    = [$(round(u_rec[1], digits=6)), $(round(u_rec[2], digits=6)), $(round(u_rec[3], digits=6))]")
     println("  N values = $Ns")
     println("  m values = $Ms")
-    println("  Threads  = $(Threads.nthreads())")
+    println("  Threads  = $(Threads.nthreads())  (BLAS only)")
     println("  maxiter  = $MAXITER")
     println("  output   = $data_dir")
     println("  started  = $(now())")
@@ -258,20 +274,19 @@ function main()
     println("Total combinations to run: $n_combos")
     println()
 
-    # Thread-safe results collection
-    results_lock = ReentrantLock()
     results = Dict{Tuple{Int,Int}, NamedTuple}()
 
     overall_start = time()
 
-    # --- Run all combos in parallel using @threads ---
-    Threads.@threads for idx in 1:n_combos
+    # --- Run combos SEQUENTIALLY to avoid NKSearch internal data races ---
+    # NKSearch._search! uses @spawn over segments internally.  Running
+    # multiple _search! calls concurrently via @threads causes shared
+    # mutable state corruption even when per-case flows are deepcopied.
+    for idx in 1:n_combos
         N, m = combos[idx]
-        res = run_one_case(T, rec_id, N, m, u_rec, T_guess,
-                           L_flow, L_adj_flow, phase_lock, data_dir)
-        lock(results_lock) do
-            results[(N, m)] = res
-        end
+        result = run_one_case(T, rec_id, N, m, u_rec, T_guess,
+                              L_flow, L_adj_flow, phase_lock, data_dir)
+        results[(N, m)] = result
     end
 
     overall_elapsed = time() - overall_start
