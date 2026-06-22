@@ -27,19 +27,28 @@ function main()
     n_rows = size(data, 1)
 
     total = 0
+    skipped = 0
     open(output_file, "w") do io
         for row in 1:n_rows
-            folder_str = strip(String(data[row, 1]))   # "new" or "old"
-            T_str      = strip(String(data[row, 2]))   # e.g. "T05"
-            rec_id     = Int(data[row, 3])
-            N          = Int(data[row, 4])
-            m          = Int(data[row, 5])
-            # status   = strip(String(data[row, 6]))
+            status = strip(String(data[row, 6]))
 
-            # Parse T value from label: "T05" → 5.0, "T160" → 160.0
+            # Only rerun cases that NEVER produced output.
+            # "hit_maxiter" and "diverged" ran to completion — the recurrence
+            # simply doesn't converge; rerunning won't help.
+            # "incomplete" and "no_data" are from crashed/timed-out jobs that
+            # need a proper rerun.
+            if status != "incomplete" && status != "no_data"
+                skipped += 1
+                continue
+            end
+
+            T_str  = strip(String(data[row, 2]))   # e.g. "T05"
+            rec_id = Int(data[row, 3])
+            N      = Int(data[row, 4])
+            m      = Int(data[row, 5])
+
             T_val = parse(Float64, T_str[2:end])
 
-            # Write: T rec_id N m  (standard hpc_worker.jl format)
             println(io, "$T_val $rec_id $N $m")
             total += 1
         end
@@ -47,7 +56,8 @@ function main()
 
     println("="^60)
     println("  Rerun task list → $output_file")
-    println("  Total cases:     $total")
+    println("  Cases written:   $total")
+    println("  Skipped:         $skipped  (hit_maxiter / diverged)")
     println()
 
     # Print chunked submission commands
