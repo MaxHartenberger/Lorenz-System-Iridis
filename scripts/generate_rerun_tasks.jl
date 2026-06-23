@@ -49,6 +49,13 @@ function main()
 
             T_val = parse(Float64, T_str[2:end])
 
+            # For T=80 and T=160: skip small (N,m) combos that don't converge.
+            # N < 40 and m < 40 are known to diverge for these long periods.
+            if (T_val == 80.0 || T_val == 160.0) && N < 40 && m < 40
+                skipped += 1
+                continue
+            end
+
             println(io, "$T_val $rec_id $N $m")
             total += 1
         end

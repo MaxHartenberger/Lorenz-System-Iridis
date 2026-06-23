@@ -5,6 +5,7 @@
 # --- Generated / runtime artefacts ----------------------------------------- #
 /output/
 /plots/
+/plots_old/
 /logs/
 tasks.txt
 rec_tasks.txt
