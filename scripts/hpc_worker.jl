@@ -178,7 +178,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     history_lambda    = Float64[]
     history_T         = Float64[]
 
-    cb = (iter, z, Fz, f_norm, ∇ϕ_norm, λ) -> begin
+    cb = (iter, z, Fz, f_norm, ∇ϕ_norm, λ, T) -> begin
         push!(history_iter,      iter)
         push!(history_e_norm,    f_norm)
         push!(history_grad_norm, ∇ϕ_norm)
@@ -196,7 +196,6 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
         verbose          = false,
         ls_maxiter       = 30,
         lbfgs_memory     = m,
-        lbfgs_adj_system = Ls_adj,
         callback         = cb,
     )
 
@@ -205,7 +204,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     local final_normF, converged, n_iter, elapsed, error_msg
 
     try
-        NKSearch._search!(Gs, Ls, nothing, (phase_lock,), z0, opts)
+        NKSearch._search!(Gs, Ls, Ls_adj, nothing, (phase_lock,), z0, opts)
     catch err
         elapsed = time() - t_start
         save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
@@ -218,7 +217,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     elapsed = time() - t_start
 
     # --- 6f.  Compute final residual ------------------------------------------
-    fwd_tmp = NKSearch.IterSolCache(Gs, Ls, nothing, nothing, (phase_lock,), z0)
+    fwd_tmp = NKSearch.StageIterCache(Gs, Ls, nothing, (phase_lock,), z0)
     b_tmp   = similar(z0)
     NKSearch.update!(fwd_tmp, b_tmp, z0)
     final_normF = norm(b_tmp)

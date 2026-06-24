@@ -38,6 +38,8 @@ myquota   # short summary
 
 Submit with: `sbatch script.slurm` (returns a job ID). Use `.slurm` extension for scripts.
 
+Example: `sbatch test_one_run.slurm` — runs a single `(T, rec_id, N, m)` case via `hpc_worker.jl`.
+
 ### Minimal Job Script
 ```bash
 #!/bin/bash
@@ -76,14 +78,6 @@ cd $HOME/path/to/project
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
 julia --threads $SLURM_CPUS_PER_TASK hpc_worker.jl
 ```
-
-### Job Arrays (for Parameter Sweeps)
-Run many similar jobs with one submission:
-```bash
-#SBATCH --array=1-100          # 100 tasks, $SLURM_ARRAY_TASK_ID = 1..100
-#SBATCH --array=1-100%10       # Max 10 running at once
-```
-Use `$SLURM_ARRAY_TASK_ID` in the script to select input files/parameters.
 
 ### Monitoring & Control
 ```bash
