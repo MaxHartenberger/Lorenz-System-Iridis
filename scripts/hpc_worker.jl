@@ -225,14 +225,8 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     NKSearch.update!(fwd_tmp, b_tmp, z0)
     final_normF = norm(b_tmp)
 
-    push!(history_iter,      length(history_iter))
-    push!(history_e_norm,    final_normF)
-    push!(history_grad_norm, NaN)
-    push!(history_lambda,    NaN)
-    push!(history_T,         z0.d[1])
-
     converged = final_normF < 1e-8
-    n_iter    = length(history_iter) - 1
+    n_iter    = length(history_iter)
 
     # --- 6g.  Save CSV --------------------------------------------------------
     fpath = save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
