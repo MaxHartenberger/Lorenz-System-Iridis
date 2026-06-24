@@ -131,7 +131,8 @@ function save_history_csv(outdir::String, rec_id::Int, N::Int, m::Int,
                           iter::Vector{Int},
                           e_norm::Vector{Float64},
                           grad_norm::Vector{Float64},
-                          lambda::Vector{Float64})
+                          lambda::Vector{Float64},
+                          T_curr::Vector{Float64})
     fname = @sprintf("N%02d_m%02d.csv", N, m)
     # If multiple rec_ids share the same (N,m), include rec_id in the filename
     # to avoid collisions — this worker is designed for one rec_id per call.
@@ -141,10 +142,10 @@ function save_history_csv(outdir::String, rec_id::Int, N::Int, m::Int,
 
     nrows = length(iter)
     open(fpath, "w") do io
-        println(io, "iter,e_norm,grad_norm,lambda")
+        println(io, "iter,e_norm,grad_norm,lambda,T_curr")
         for row in 1:nrows
-            @printf(io, "%d,%.16e,%.16e,%.16e\n",
-                    iter[row], e_norm[row], grad_norm[row], lambda[row])
+            @printf(io, "%d,%.16e,%.16e,%.16e,%.16e\n",
+                    iter[row], e_norm[row], grad_norm[row], lambda[row], T_curr[row])
         end
     end
     return fpath
@@ -175,12 +176,14 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     history_e_norm    = Float64[]
     history_grad_norm = Float64[]
     history_lambda    = Float64[]
+    history_T         = Float64[]
 
     cb = (iter, z, Fz, f_norm, ∇ϕ_norm, λ) -> begin
         push!(history_iter,      iter)
         push!(history_e_norm,    f_norm)
         push!(history_grad_norm, ∇ϕ_norm)
         push!(history_lambda,    λ)
+        push!(history_T,         z.d[1])
         return false
     end
 
@@ -206,7 +209,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     catch err
         elapsed = time() - t_start
         save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
-                         history_grad_norm, history_lambda)
+                         history_grad_norm, history_lambda, history_T)
         println("FAILED: $err")
         return (converged=false, final_T=NaN, final_normF=NaN,
                 n_iter=length(history_iter), elapsed=elapsed, error_msg=sprint(showerror, err))
@@ -224,13 +227,14 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     push!(history_e_norm,    final_normF)
     push!(history_grad_norm, NaN)
     push!(history_lambda,    NaN)
+    push!(history_T,         z0.d[1])
 
     converged = final_normF < 1e-8
     n_iter    = length(history_iter) - 1
 
     # --- 6g.  Save CSV --------------------------------------------------------
     fpath = save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
-                             history_grad_norm, history_lambda)
+                             history_grad_norm, history_lambda, history_T)
 
     # --- 6h.  Status line -----------------------------------------------------
     status = converged ? "CONVERGED" : "DID NOT CONVERGE"

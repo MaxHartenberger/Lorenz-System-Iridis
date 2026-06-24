@@ -13,8 +13,9 @@ and classifies every (T, rec_id, N, m) case as one of:
 
 Outputs (saved next to this script):
     status_matrix_{new,old}.csv   –  full T × (rec_id, N, m) matrix (MultiIndex CSV)
-    status_summary.csv                –  counts of each status per T & folder
-    cases_to_rerun.csv                –  all non-converged cases (flat list)
+    status_summary.csv            –  counts of each status per T & folder
+    cases_to_rerun.csv            –  all non-converged cases (flat list)
+    rec_overview_{new,old}.csv    –  per-recurrence overview (rec_id rows, aggregated stats)
 """
 
 from __future__ import annotations
@@ -132,6 +133,49 @@ def classify_csv(filepath: Path) -> str:
         return "incomplete"
 
 
+def get_csv_stats(filepath: Path) -> tuple[str, float | None, float | None]:
+    """Return (status, final_iter, final_e_norm) for a single CSV.
+
+    Like classify_csv() but additionally extracts the iteration count and
+    final ‖F‖ from the last line.  Returns (None, None) for iter/e_norm
+    when they are not meaningful (no_data / diverged / read error).
+    """
+    try:
+        head_lines = _read_first_lines(filepath, 6)
+        if len(head_lines) < 2:
+            return ("incomplete", None, None)
+
+        for line in head_lines[1:]:
+            parts = line.strip().split(",")
+            if len(parts) >= 2 and parts[1].strip() == "NaN":
+                return ("diverged", None, None)
+
+        last_line = _read_tail_line(filepath)
+        if not last_line:
+            return ("incomplete", None, None)
+
+        parts = last_line.strip().split(",")
+        if len(parts) < 4:
+            return ("incomplete", None, None)
+
+        e_norm = float(parts[1])
+        grad_norm_str = parts[2].strip()
+        iteration = int(parts[0])
+
+        if grad_norm_str == "NaN":
+            if e_norm <= CONVERGENCE_TOL:
+                return ("converged", iteration, e_norm)
+            elif iteration >= MAXITER:
+                return ("hit_maxiter", iteration, e_norm)
+            else:
+                return ("incomplete", iteration, e_norm)
+        else:
+            return ("incomplete", iteration, e_norm)
+
+    except Exception:
+        return ("incomplete", None, None)
+
+
 def parse_filename(filename: str) -> tuple[int, int] | None:
     """Extract (N, m) from 'N05_m10.csv', or None if it doesn't match."""
     m = FNAME_RE.match(filename)
@@ -179,15 +223,21 @@ def collect_results(output_root: Path) -> pd.DataFrame:
                     continue
                 N, m = parsed
                 existing_csvs.add((N, m))
-                status = classify_csv(csv_file)
-                rows.append({"T": T_label, "rec_id": rec_id, "N": N, "m": m, "status": status})
+                status, final_iter, final_e_norm = get_csv_stats(csv_file)
+                rows.append({
+                    "T": T_label, "rec_id": rec_id, "N": N, "m": m,
+                    "status": status, "iter": final_iter, "e_norm_final": final_e_norm,
+                })
                 n_csvs += 1
 
             # Mark missing (N, m) combos as "no_data"
             for N in NS:
                 for m in MS:
                     if (N, m) not in existing_csvs:
-                        rows.append({"T": T_label, "rec_id": rec_id, "N": N, "m": m, "status": "no_data"})
+                        rows.append({
+                            "T": T_label, "rec_id": rec_id, "N": N, "m": m,
+                            "status": "no_data", "iter": None, "e_norm_final": None,
+                        })
 
         n_expected = len(rec_dirs) * len(NS) * len(MS)
         print(f"  {T_label}: {n_csvs} CSVs processed, {len(rec_dirs)} recs, {n_expected} total combos",
@@ -240,6 +290,106 @@ def build_rerun_list(df_long: pd.DataFrame, folder_name: str) -> pd.DataFrame:
     return rerun
 
 
+def build_rec_overview(df_long: pd.DataFrame, folder_name: str) -> pd.DataFrame:
+    """Build a per-recurrence overview CSV.
+
+    One row per (T, rec_id).  Aggregates across all 49 (N,m) combos for
+    that recurrence and extracts:
+
+      converged          – "yes" if ANY combo converged, else "no"
+      num_converged      – how many combos converged (out of 49)
+      num_diverged       – how many combos diverged
+      num_hit_maxiter    – how many combos hit maxiter
+      num_incomplete     – how many combos stopped early
+      num_no_data        – how many combos have no CSV
+      best_N / best_m    – (N,m) of the converged combo with FEWEST iterations
+      best_iter          – iteration count of that fastest combo
+      min_N_converged    – smallest N (in {5,10,…,320}) that achieved convergence
+      min_m_converged    – smallest m that achieved convergence
+      median_iter        – median iterations among ALL converged combos
+      converged_T        – placeholder column (NaN); user will add this later
+    """
+    # Only look at rows that actually exist (skip no_data for stats)
+    existing = df_long[df_long["status"] != "no_data"]
+    converged = existing[existing["status"] == "converged"]
+
+    # --- Per-recurrence aggregation ---
+    group_keys = ["T", "rec_id"]
+
+    # Status counts
+    counts = (
+        existing.groupby(group_keys)["status"]
+        .value_counts()
+        .unstack(fill_value=0)
+    )
+    for col in STATUS_DTYPE.categories:
+        if col not in counts.columns:
+            counts[col] = 0
+    counts = counts[["converged", "diverged", "hit_maxiter", "incomplete"]]
+    counts["num_no_data"] = 49 - counts.sum(axis=1)  # missing CSVs
+    counts = counts.rename(columns=lambda c: f"num_{c}" if c != "num_no_data" else c)
+
+    # Best by fewest iterations (among converged)
+    best_iter = (
+        converged.dropna(subset=["iter"])
+        .sort_values("iter")
+        .groupby(group_keys)
+        .first()[["N", "m", "iter"]]
+        .rename(columns={"N": "best_N", "m": "best_m", "iter": "best_iter"})
+    )
+
+    # Median iterations (robustness indicator)
+    median_iter = (
+        converged.dropna(subset=["iter"])
+        .groupby(group_keys)["iter"]
+        .median()
+        .rename("median_iter")
+    )
+
+    # Minimum N and m that converged
+    min_n = (
+        converged.groupby(group_keys)["N"]
+        .min()
+        .rename("min_N_converged")
+    )
+    min_m = (
+        converged.groupby(group_keys)["m"]
+        .min()
+        .rename("min_m_converged")
+    )
+
+    # --- Assemble ---
+    overview = counts.copy()
+    overview["converged"] = (overview["num_converged"] > 0).map({True: "yes", False: "no"})
+
+    for src in [best_iter, median_iter, min_n, min_m]:
+        overview = overview.join(src, how="left")
+
+    # Placeholder for user to fill later
+    overview["converged_T"] = np.nan
+
+    # Sort columns for readability
+    col_order = [
+        "converged",
+        "num_converged", "num_diverged", "num_hit_maxiter", "num_incomplete", "num_no_data",
+        "best_N", "best_m", "best_iter",
+        "min_N_converged", "min_m_converged",
+        "median_iter",
+        "converged_T",
+    ]
+    overview = overview[col_order]
+
+    # Clean index to have rec_id as a proper column
+    overview = overview.reset_index()
+    overview["folder"] = folder_name
+    overview = overview.sort_values(["T", "rec_id"]).reset_index(drop=True)
+
+    # Reorder: folder, T, rec_id first
+    overview = overview[["folder", "T", "rec_id"] + col_order]
+
+    return overview
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -272,6 +422,7 @@ def main():
 
     all_summaries = []
     all_rerun = []
+    all_overviews = []
 
     for label, root in [("new", args.new_results), ("old", args.old_results)]:
         if not root.is_dir():
@@ -299,6 +450,15 @@ def main():
         all_rerun.append(rerun)
         print(f"  Non-converged cases: {len(rerun)}")
 
+        # Per-recurrence overview
+        overview = build_rec_overview(df_long, label)
+        overview_path = out_dir / f"rec_overview_{label}.csv"
+        overview.to_csv(overview_path, index=False)
+        all_overviews.append(overview)
+        num_recs = len(overview)
+        num_conv = (overview["converged"] == "yes").sum()
+        print(f"  → saved {overview_path}  ({num_recs} recurrences, {num_conv} with ≥1 converged combo)")
+
     # ------------------------------------------------------------------
     # Combined outputs
     # ------------------------------------------------------------------
@@ -308,6 +468,12 @@ def main():
         combined_summary.to_csv(summary_path)
         print(f"\n  → saved {summary_path}")
         print(combined_summary.to_string())
+
+    if all_overviews:
+        combined_overview = pd.concat(all_overviews, ignore_index=True)
+        overview_path = out_dir / "rec_overview_combined.csv"
+        combined_overview.to_csv(overview_path, index=False)
+        print(f"\n  → saved {overview_path}  ({len(combined_overview)} recurrences total)")
 
     if all_rerun:
         combined_rerun = pd.concat(all_rerun, ignore_index=True)

@@ -11,6 +11,7 @@ tasks.txt
 rec_tasks.txt
 /lorenz-results/
 /lorenz-results-old/
+/archive
 
 # --- Julia artefacts -------------------------------------------------------- #
 /Manifest.toml
