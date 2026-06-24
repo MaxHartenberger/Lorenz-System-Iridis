@@ -202,6 +202,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     # --- 6e.  Run the L-BFGS optimisation -------------------------------------
     t_start = time()
     local final_normF, converged, n_iter, elapsed, error_msg
+    error_msg = ""   # initialised here so success path has a value
 
     try
         NKSearch._search!(Gs, Ls, Ls_adj, nothing, (phase_lock,), z0, opts)
