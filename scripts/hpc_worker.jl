@@ -134,9 +134,7 @@ function save_history_csv(outdir::String, rec_id::Int, N::Int, m::Int,
                           lambda::Vector{Float64},
                           T_curr::Vector{Float64})
     fname = @sprintf("N%02d_m%02d.csv", N, m)
-    # If multiple rec_ids share the same (N,m), include rec_id in the filename
-    # to avoid collisions — this worker is designed for one rec_id per call.
-    rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id))
+    rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id), "iteration")
     mkpath(rec_dir)
     fpath = joinpath(rec_dir, fname)
 
@@ -146,6 +144,50 @@ function save_history_csv(outdir::String, rec_id::Int, N::Int, m::Int,
         for row in 1:nrows
             @printf(io, "%d,%.16e,%.16e,%.16e,%.16e\n",
                     iter[row], e_norm[row], grad_norm[row], lambda[row], T_curr[row])
+        end
+    end
+    return fpath
+end
+
+# ---------------------------------------------------------------------------- #
+# 5b.  Save converged trajectory as CSV (phase-space points along the orbit)
+# ---------------------------------------------------------------------------- #
+"""
+    save_trajectory_csv(outdir, rec_id, N, m, z0, ϕ)
+
+Integrates the converged multi-shooting orbit and saves all phase-space
+points to a CSV with columns: `t, x, y, z, segment`.
+
+The trajectory is built segment-by-segment: each shooting point z_i is
+integrated forward by T/N using the flow ϕ, collecting every Δt step.
+"""
+function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, m::Int,
+                             z0, ϕ)
+    T_final = z0.d[1]          # converged period
+    T_seg   = T_final / N       # time per shooting segment
+    n_steps = round(Int, T_seg / Δt)
+
+    rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id), "trajectory")
+    mkpath(rec_dir)
+    fname   = @sprintf("N%02d_m%02d_trajectory.csv", N, m)
+    fpath   = joinpath(rec_dir, fname)
+
+    open(fpath, "w") do io
+        println(io, "t,x,y,z,segment")
+        for seg in 1:N
+            # Extract shooting point for this segment
+            idx_start = 2 + 3 * (seg - 1)   # 1-based index in z0.d
+            u = Float64[z0.d[idx_start], z0.d[idx_start+1], z0.d[idx_start+2]]
+
+            # Integrate forward for T_seg, writing every Δt step
+            t_seg = (seg - 1) * T_seg   # global time at start of this segment
+            for step in 0:n_steps
+                @printf(io, "%.10e,%.16e,%.16e,%.16e,%d\n",
+                        t_seg + step * Δt, u[1], u[2], u[3], seg)
+                if step < n_steps
+                    ϕ(u, (0.0, Δt))   # integrate one Δt forward
+                end
+            end
         end
     end
     return fpath
@@ -236,6 +278,11 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     # Append convergence status as a comment line (safe for CSV readers)
     open(fpath, "a") do io
         println(io, converged ? "# converged" : "# did_not_converge")
+    end
+
+    # --- 6g-bis.  Save trajectory if converged --------------------------------
+    if converged
+        save_trajectory_csv(data_dir, rec_id, N, m, z0, ϕ)
     end
 
     # --- 6h.  Status line -----------------------------------------------------

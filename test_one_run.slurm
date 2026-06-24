@@ -25,7 +25,7 @@ echo "Node:           $(hostname)"
 echo ""
 
 # --- Run single case ---
-julia scripts/hpc_worker.jl 5.0 1 5 5
+julia scripts/hpc_worker.jl 5.0 1 5 5 --output-dir test
 
 EXIT_CODE=$?
 echo ""
