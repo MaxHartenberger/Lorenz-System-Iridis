@@ -207,8 +207,11 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
         NKSearch._search!(Gs, Ls, Ls_adj, nothing, (phase_lock,), z0, opts)
     catch err
         elapsed = time() - t_start
-        save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
-                         history_grad_norm, history_lambda, history_T)
+        fpath_crash = save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
+                                       history_grad_norm, history_lambda, history_T)
+        open(fpath_crash, "a") do io
+            println(io, "# crashed")
+        end
         println("FAILED: $err")
         return (converged=false, final_T=NaN, final_normF=NaN,
                 n_iter=length(history_iter), elapsed=elapsed, error_msg=sprint(showerror, err))
@@ -234,6 +237,11 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     # --- 6g.  Save CSV --------------------------------------------------------
     fpath = save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
                              history_grad_norm, history_lambda, history_T)
+
+    # Append convergence status as a comment line (safe for CSV readers)
+    open(fpath, "a") do io
+        println(io, converged ? "# converged" : "# did_not_converge")
+    end
 
     # --- 6h.  Status line -----------------------------------------------------
     status = converged ? "CONVERGED" : "DID NOT CONVERGE"
