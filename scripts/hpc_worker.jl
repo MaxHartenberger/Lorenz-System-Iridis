@@ -175,9 +175,9 @@ function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, m::Int,
     open(fpath, "w") do io
         println(io, "t,x,y,z,segment")
         for seg in 1:N
-            # Extract shooting point for this segment
-            idx_start = 2 + 3 * (seg - 1)   # 1-based index in z0.d
-            u = Float64[z0.d[idx_start], z0.d[idx_start+1], z0.d[idx_start+2]]
+            # z0.d[1] is T (scalar), z0.d[2..N+1] are the shooting points
+            # (each a Vector{Float64} of length 3)
+            u = copy(z0.d[seg + 1])
 
             # Integrate forward for T_seg, writing every Δt step
             t_seg = (seg - 1) * T_seg   # global time at start of this segment
