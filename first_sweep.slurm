@@ -18,8 +18,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=2000
-#SBATCH --time=01:00:00
+#SBATCH --mem=3700
+#SBATCH --time=02:00:00
 #SBATCH --partition=amd_student
 
 module load julia/1.12.4 || { echo "ERROR: Julia module not found"; exit 2; }
