@@ -9,9 +9,6 @@
 /logs/
 tasks.txt
 rec_tasks.txt
-/lorenz-results/
-/lorenz-results-old/
-/archive
 /test
 /outputs
 
@@ -32,3 +29,9 @@ Thumbs.db
 
 # --- Exclude legacy / scratch scripts --------------------------------------- #
 /scripts/old/
+/lorenz-results/
+/lorenz-results-old/
+/archive
+
+# --- Python artefacts -------------------------------------------------------- #
+__pycache__/

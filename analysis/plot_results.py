@@ -4,8 +4,9 @@ plot_results.py
 ===============
 Generates plots from L-BFGS periodic-orbit search results on the Lorenz system.
 
-Reads .out log files to determine convergence status and actual converged
-period T, then reads CSV files for convergence-curve data.
+Reads per-iteration CSV files (outputs/T{XX}/data/rec{XXX}/iteration/N{XX}_m{XX}.csv)
+to determine convergence status, actual converged period T, and iteration counts.
+Loads full CSV data on demand for convergence-curve plots (fig1).
 
 Plots are registered in the PLOT_FUNCTIONS dict — add new plot functions there
 and they will be automatically available from the command line.
@@ -44,9 +45,8 @@ CONVERGENCE_TOL: float = 1e-8
 MAXITER: int = 1_000_000
 
 # Paths
-ROOT_DIR: Path = Path(__file__).resolve().parent
-OUTPUT_DIR: Path = ROOT_DIR / "lorenz-results" / "output"
-LOGS_DIR: Path = ROOT_DIR / "lorenz-results" / "logs"
+ROOT_DIR: Path = Path(__file__).resolve().parent.parent  # repo root
+DATA_DIR: Path = ROOT_DIR / "outputs"           # per-iteration CSV files
 _PLOTS_DIR: List[Path] = [ROOT_DIR / "plots" / "python_plots"]  # mutable so main() can override
 
 
@@ -65,20 +65,11 @@ plt.rcParams.update({
 })
 
 # ---------------------------------------------------------------------------
-# Regex patterns for parsing .out log files
+# CSV comment-marker patterns for status classification
 # ---------------------------------------------------------------------------
-RE_PARAMS = re.compile(r"Parameters:\s+T=([\d.]+),\s+rec_id=(\d+)")
-RE_CONVERGED = re.compile(
-    r"^\s*✓\s+N=\s*(\d+)\s+m=\s*(\d+)\s+‖F‖=([\d.eE+\-]+)\s+"
-    r"T=([\d.]+)\s+(\d+)\s+it\s+([\d.]+)\s+s",
-    re.MULTILINE,
-)
-RE_NONCONVERGED = re.compile(
-    r"^\s*✗\s+N=\s*(\d+)\s+m=\s*(\d+)\s+‖F‖=([\d.eE+\-]+)\s+"
-    r"T=([\d.]+)\s+(\d+)\s+it\s+([\d.]+)\s+s",
-    re.MULTILINE,
-)
-RE_FAIL = re.compile(r"^\s*FAIL\s+N=\s*(\d+)\s+m=\s*(\d+)", re.MULTILINE)
+MARKER_CONVERGED = "# converged"
+MARKER_DID_NOT_CONVERGE = "# did_not_converge"
+MARKER_CRASHED = "# crashed"
 
 
 # ---------------------------------------------------------------------------
@@ -86,13 +77,12 @@ RE_FAIL = re.compile(r"^\s*FAIL\s+N=\s*(\d+)\s+m=\s*(\d+)", re.MULTILINE)
 # ---------------------------------------------------------------------------
 class ComboResult:
     """Stores result for one (N, m) combination within a recurrence."""
-    __slots__ = ("status", "T_actual", "iterations", "time")
+    __slots__ = ("status", "T_actual", "iterations")
     def __init__(self, status: str, T_actual: Optional[float] = None,
-                 iterations: int = 0, time: float = 0.0):
-        self.status = status        # 'converged' | 'hit_maxiter' | 'incomplete' | 'failed' | 'no_data'
+                 iterations: int = 0):
+        self.status = status        # 'converged' | 'hit_maxiter' | 'incomplete' | 'diverged' | 'no_data'
         self.T_actual = T_actual    # actual converged period (None if not converged)
         self.iterations = iterations
-        self.time = time
 
 
 class RecurrenceData:
@@ -151,84 +141,217 @@ class RecurrenceData:
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Data loading — parse per-iteration CSVs
 # ---------------------------------------------------------------------------
-def parse_log_file(log_path: Path) -> RecurrenceData:
-    """Parse a single .out log file into a RecurrenceData object."""
+def _read_csv_last_data_row(csv_path: Path) -> Optional[pd.DataFrame]:
+    """Read the last data row (before any # comment line) of a CSV.
+    Returns a 1-row DataFrame, or None if file missing/corrupt."""
+    if not csv_path.is_file():
+        return None
     try:
-        with open(log_path, "r", errors="replace") as fh:
-            content = fh.read()
+        # Read the file in reverse to find the last data line efficiently
+        with open(csv_path, "rb") as fh:
+            # Seek to end, read backwards in chunks to find last non-comment line
+            fh.seek(0, 2)
+            file_size = fh.tell()
+            chunk_size = 4096
+            tail_lines: List[str] = []
+            pos = file_size
+            while pos > 0 and len(tail_lines) < 5:
+                read_size = min(chunk_size, pos)
+                pos -= read_size
+                fh.seek(pos)
+                chunk = fh.read(read_size).decode("utf-8", errors="replace")
+                tail_lines = chunk.splitlines() + tail_lines
+                if pos == 0:
+                    break
+        # Find the last non-comment line
+        last_data_line = None
+        for line in reversed(tail_lines):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                last_data_line = stripped
+                break
+        if last_data_line is None:
+            return None
+        # Parse as CSV row
+        import io
+        # Prepend the header line from the file
+        with open(csv_path, "r", errors="replace") as fh:
+            header = fh.readline().strip()
+        df = pd.read_csv(io.StringIO(f"{header}\n{last_data_line}"))
+        return df
+    except Exception:
+        return None
+
+
+def _parse_csv_status(csv_path: Path) -> Tuple[str, int, Optional[float]]:
+    """Classify a single (N,m) combo by reading its iteration CSV.
+
+    Returns (status, iterations, T_actual) where status is one of:
+      'converged', 'hit_maxiter', 'incomplete', 'diverged', 'no_data'
+
+    Classification logic (from ANALYSIS_CONTEXT.md):
+      1. File missing → 'no_data'
+      2. NaN in first few e_norm rows → 'diverged'
+      3. Read last line comment marker:
+           '# converged' + e_norm ≤ 1e-8 → 'converged'
+           '# did_not_converge' + iter ≥ MAXITER → 'hit_maxiter'
+           '# did_not_converge' + iter < MAXITER → 'incomplete'
+           '# crashed' → 'incomplete'
+           No marker → 'incomplete' (killed mid-run)
+    """
+    if not csv_path.is_file():
+        return ("no_data", 0, None)
+
+    try:
+        with open(csv_path, "r", errors="replace") as fh:
+            lines = fh.readlines()
     except OSError:
-        return None
+        return ("no_data", 0, None)
 
-    # Extract T_target and rec_id
-    m_params = RE_PARAMS.search(content)
-    if not m_params:
-        return None
-    T_target = float(m_params.group(1))
-    rec_id = int(m_params.group(2))
-    rec = RecurrenceData(T_target, rec_id)
+    if len(lines) < 2:
+        return ("no_data", 0, None)
 
-    # Parse converged (✓) lines — these take priority
-    for m in RE_CONVERGED.finditer(content):
-        N, mm = int(m.group(1)), int(m.group(2))
-        T_actual = float(m.group(4))
-        iterations = int(m.group(5))
-        time = float(m.group(6))
-        rec.combos[(N, mm)] = ComboResult("converged", T_actual, iterations, time)
+    # --- NaN scan: check first few data rows (skip header) ---
+    header = lines[0].strip()
+    cols = header.split(",")
+    try:
+        e_norm_idx = cols.index("e_norm")
+    except ValueError:
+        return ("incomplete", 0, None)
 
-    # Parse non-converged (✗) lines — fill in combos not already marked converged
-    for m in RE_NONCONVERGED.finditer(content):
-        N, mm = int(m.group(1)), int(m.group(2))
-        if (N, mm) in rec.combos:
+    for line in lines[1:min(6, len(lines))]:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            break
+        if not stripped:
             continue
-        T_actual = float(m.group(4))
-        iterations = int(m.group(5))
-        time = float(m.group(6))
-        status = "hit_maxiter" if iterations >= MAXITER else "incomplete"
-        rec.combos[(N, mm)] = ComboResult(status, T_actual, iterations, time)
+        parts = stripped.split(",")
+        if len(parts) <= e_norm_idx:
+            continue
+        try:
+            val = float(parts[e_norm_idx])
+        except ValueError:
+            continue
+        if np.isnan(val):
+            return ("diverged", 0, None)
 
-    # Parse FAIL lines — fill in combos not already marked
-    for m in RE_FAIL.finditer(content):
-        N, mm = int(m.group(1)), int(m.group(2))
-        if (N, mm) not in rec.combos:
-            rec.combos[(N, mm)] = ComboResult("failed")
+    # --- Find last comment marker and last data row ---
+    last_comment = None
+    last_data_line = None
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            last_comment = stripped
+            continue
+        if stripped and last_data_line is None:
+            last_data_line = stripped
+            break
 
-    # Any (N,m) not in combos → no_data (worker didn't reach it before time limit)
-    # We leave these implicit; accessors should use .get() with default.
+    if last_data_line is None:
+        return ("no_data", 0, None)
 
-    rec.compute_representative_T()
-    return rec
+    # Parse last data row
+    parts = last_data_line.split(",")
+    if len(parts) < len(cols):
+        return ("incomplete", 0, None)
+
+    try:
+        iter_idx = cols.index("iter")
+        t_idx = cols.index("T_curr")
+        iterations = int(float(parts[iter_idx]))
+        e_norm = float(parts[e_norm_idx])
+        T_actual = float(parts[t_idx])
+    except (ValueError, IndexError):
+        return ("incomplete", 0, None)
+
+    # --- Classify based on comment marker ---
+    if last_comment is None:
+        # Killed mid-run before writing a comment
+        return ("incomplete", iterations, T_actual)
+
+    if last_comment == MARKER_CONVERGED:
+        if e_norm <= CONVERGENCE_TOL:
+            return ("converged", iterations, T_actual)
+        else:
+            return ("incomplete", iterations, T_actual)
+
+    if last_comment == MARKER_DID_NOT_CONVERGE:
+        if iterations >= MAXITER:
+            return ("hit_maxiter", iterations, T_actual)
+        else:
+            return ("incomplete", iterations, T_actual)
+
+    if last_comment == MARKER_CRASHED:
+        return ("incomplete", iterations, T_actual)
+
+    # Unknown comment marker
+    return ("incomplete", iterations, T_actual)
 
 
-def load_all_data() -> List[RecurrenceData]:
-    """Parse all .out log files and return list of RecurrenceData, sorted by
-    representative T (then rec_id for ties), including only recurrences
-    with at least one converged combo."""
-    print("Loading .out log files ...")
+def _discover_recurrences(data_dir: Path) -> List[Tuple[float, int]]:
+    """Scan the outputs/ directory and return a sorted list of (T_target, rec_id)
+    pairs for all recurrences that have at least one CSV file."""
+    recs_set: set = set()
+    # Pattern: outputs/T{XX}/data/rec{XXX}/iteration/N{XX}_m{XX}.csv
+    # Use resolve() for consistent absolute path parts indexing.
+    data_dir_resolved = data_dir.resolve()
+    for csv_path in sorted(data_dir.glob("T*/data/rec*/iteration/N*.csv")):
+        parts = csv_path.resolve().parts
+        # parts: .../outputs/T05/data/rec001/iteration/N05_m05.csv
+        # Index from end: [-1]=filename, [-2]=iteration, [-3]=recNNN, [-4]=data, [-5]=TNN
+        try:
+            t_dir = parts[-5]   # e.g. "T05"
+            rec_dir = parts[-3] # e.g. "rec001"
+            T_target = float(t_dir[1:])  # strip leading 'T'
+            rec_id = int(rec_dir[3:])    # strip leading 'rec'
+            recs_set.add((T_target, rec_id))
+        except (ValueError, IndexError):
+            continue
+    return sorted(recs_set)
+
+
+def load_all_data(data_dir: Optional[Path] = None) -> List[RecurrenceData]:
+    """Scan per-iteration CSVs to classify every (N,m) combo, build
+    RecurrenceData objects, and return only recurrences with ≥1 converged combo,
+    sorted by representative T."""
+    if data_dir is None:
+        data_dir = DATA_DIR
+
+    print(f"Scanning CSVs in {data_dir} ...")
+    all_recs = _discover_recurrences(data_dir)
+    print(f"  Found {len(all_recs)} recurrences with CSV files.")
+
     recs: List[RecurrenceData] = []
-    log_files = sorted(LOGS_DIR.glob("rec_slurm_*.out"),
-                       key=lambda p: int(re.search(r"rec_slurm_\d+_(\d+)\.out", p.name).group(1)))
+    for T_target, rec_id in all_recs:
+        rec = RecurrenceData(T_target, rec_id)
+        T_label = f"T{int(T_target):02d}"
+        rec_dir = data_dir / T_label / "data" / f"rec{rec_id:03d}" / "iteration"
 
-    for lf in log_files:
-        rec = parse_log_file(lf)
-        if rec is not None and rec.has_any_converged:
+        for N in NS:
+            for m in MS:
+                csv_path = rec_dir / f"N{N:02d}_m{m:02d}.csv"
+                status, iterations, T_actual = _parse_csv_status(csv_path)
+                rec.combos[(N, m)] = ComboResult(status, T_actual, iterations)
+
+        rec.compute_representative_T()
+        if rec.has_any_converged:
             recs.append(rec)
 
     # Sort by representative_T, then rec_id
     recs.sort(key=lambda r: (r.representative_T if r.representative_T else float("inf"),
                               r.rec_id))
 
-    n_total = len(list(LOGS_DIR.glob("rec_slurm_*.out")))
-    print(f"  Parsed {n_total} log files → {len(recs)} recurrences with ≥1 converged combo.")
+    print(f"  Classified all combos → {len(recs)} recurrences with ≥1 converged.")
     return recs
 
 
 def load_csv_data(rec: RecurrenceData, N: int, m: int) -> Optional[pd.DataFrame]:
-    """Load a single CSV file and return as DataFrame with columns
-    iter, e_norm, grad_norm, lambda.  Returns None if file missing or unreadable."""
+    """Load a single iteration CSV and return as DataFrame with columns
+    iter, e_norm, grad_norm, lambda, T_curr.  Returns None if file missing or unreadable."""
     T_label = f"T{int(rec.T_target):02d}"
-    csv_path = OUTPUT_DIR / T_label / "data" / f"rec{rec.rec_id:03d}" / f"N{N:02d}_m{m:02d}.csv"
+    csv_path = DATA_DIR / T_label / "data" / f"rec{rec.rec_id:03d}" / "iteration" / f"N{N:02d}_m{m:02d}.csv"
     if not csv_path.is_file():
         return None
     try:
@@ -274,10 +397,12 @@ def status_to_display(rec: RecurrenceData, N: int, m: int) -> str:
         return "✓"
     elif combo.status == "hit_maxiter":
         return "✗ₘ"     # hit maxiter
-    elif combo.status == "failed":
-        return "✗"       # crashed
+    elif combo.status == "diverged":
+        return "✗d"     # diverged
+    elif combo.status == "incomplete":
+        return "✗"      # incomplete / crashed
     else:
-        return "✗"       # incomplete
+        return "·"      # no_data
 
 
 def Ns_with_any_converged(rec: RecurrenceData) -> List[int]:
