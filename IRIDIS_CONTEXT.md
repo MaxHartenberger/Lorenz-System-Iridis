@@ -88,6 +88,10 @@ scancel -u $USER               # Cancel ALL your jobs
 scontrol hold <jobid>          # Pause a job
 ```
 
+### Job Limits
+- **MaxArraySize:** 1001 (job arrays capped at 1001 tasks)
+- **MaxJobs:** unlimited (verify with `sacctmgr show associations user=$USER format=MaxJobs`)
+
 ### Key Rules
 - **Never run computation on login nodes** — always use `sbatch`/`srun`.
 - SLURM inherits your environment; put `module load ...` and `export ...` in the script for reproducibility.
