@@ -83,11 +83,11 @@ function main()
 
     n_chunks = cld(total_tasks, SLURM_MAX_ARRAY)
     if n_chunks > 1
-        println("  Submit in $n_chunks chunk(s):")
-        for chunk in 1:n_chunks
-            start_idx = (chunk - 1) * SLURM_MAX_ARRAY + 1
-            end_idx   = min(chunk * SLURM_MAX_ARRAY, total_tasks)
-            println("    sbatch --array=$start_idx-$end_idx first_sweep.slurm")
+        println("  Split into $n_chunks chunk(s) and submit:")
+        println("    split -d -l $SLURM_MAX_ARRAY $output_file chunk_")
+        for chunk in 0:(n_chunks-1)
+            padded = lpad(chunk, 2, '0')
+            println("    sbatch --array=1-$SLURM_MAX_ARRAY first_sweep.slurm chunk_$padded")
         end
     else
         println("  Submit with:")

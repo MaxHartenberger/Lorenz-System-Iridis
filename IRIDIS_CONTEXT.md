@@ -89,8 +89,21 @@ scontrol hold <jobid>          # Pause a job
 ```
 
 ### Job Limits
-- **MaxArraySize:** 1001 (job arrays capped at 1001 tasks)
+- **MaxArraySize:** 1001 (job arrays capped at 1001 tasks). Importantly, this caps the **task ID index**, not just the count — array ranges like `--array=1001-2000` are rejected because index 2000 > 1001.
 - **MaxJobs:** unlimited (verify with `sacctmgr show associations user=$USER format=MaxJobs`)
+
+### Working Around MaxArraySize (chunked submission)
+When your parameter sweep exceeds 1000 tasks, split the task list and submit each chunk:
+```bash
+# 1. Split tasks.txt into files of 1000 lines each
+split -d -l 1000 tasks.txt chunk_
+
+# 2. Submit each chunk with --array=1-1000, passing the chunk filename
+sbatch --array=1-1000 first_sweep.slurm chunk_00
+sbatch --array=1-1000 first_sweep.slurm chunk_01
+# ... etc
+```
+Your `.slurm` script must accept the chunk filename as its first argument (`$1`) and handle empty lines gracefully in the last chunk (see `first_sweep.slurm` for the pattern).
 
 ### Key Rules
 - **Never run computation on login nodes** — always use `sbatch`/`srun`.

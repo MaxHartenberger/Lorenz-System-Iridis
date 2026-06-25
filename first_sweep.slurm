@@ -5,8 +5,11 @@
 # Generate tasks.txt FIRST:
 #   julia scripts/generate_task_list.jl --T 5,10,20
 #
-# Then submit in chunks (printed by the command above):
-#   sbatch --array=1-1000 first_sweep.slurm
+# If >1000 tasks, split and submit by chunk:
+#   split -d -l 1000 tasks.txt chunk_
+#   sbatch --array=1-1000 first_sweep.slurm chunk_00
+#   sbatch --array=1-1000 first_sweep.slurm chunk_01
+#   ...
 # ============================================================================ #
 
 #SBATCH --job-name=lorenz
@@ -23,7 +26,17 @@ module load julia/1.12.4 || { echo "ERROR: Julia module not found"; exit 2; }
 cd "$SLURM_SUBMIT_DIR" || exit 2
 mkdir -p logs
 
-PARAMS=$(sed -n "${SLURM_ARRAY_TASK_ID}p" tasks.txt)
+# Task file — first argument, or default to tasks.txt
+TASK_FILE="${1:-tasks.txt}"
+
+PARAMS=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$TASK_FILE")
+
+# Last chunk may have fewer lines — exit gracefully for empty params
+if [ -z "$PARAMS" ]; then
+    echo "task ${SLURM_ARRAY_TASK_ID}  (empty — skipping)"
+    exit 0
+fi
+
 set -- $PARAMS
 
 echo "task ${SLURM_ARRAY_TASK_ID}  T=$1 rec=$2 N=$3 m=$4  $(date)"
