@@ -1,0 +1,4 @@
+T,converged,no_data,incomplete,not_converged,hit_maxiter,diverged,crashed,error_should_be_converged
+T05,4109,0,0,0,0,0,7,0
+T10,4839,9,0,0,0,0,3,0
+T20,4824,14,0,0,0,7,6,0

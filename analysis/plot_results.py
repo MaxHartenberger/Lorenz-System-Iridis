@@ -17,7 +17,7 @@ Usage:
   python plot_results.py --list                    # list available plots
   python plot_results.py --dry-run                 # print what would be done
 
-Output directory:  plots/python_plots/
+Output directory:  analysis/plots/
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from typing import Dict, List, Tuple, Optional, Callable
 
 import numpy as np
 import pandas as pd
-import matplotlib
+#import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from matplotlib.colors import LogNorm, Normalize
@@ -47,7 +47,7 @@ MAXITER: int = 1_000_000
 # Paths
 ROOT_DIR: Path = Path(__file__).resolve().parent.parent  # repo root
 DATA_DIR: Path = ROOT_DIR / "outputs"           # per-iteration CSV files
-_PLOTS_DIR: List[Path] = [ROOT_DIR / "plots" / "python_plots"]  # mutable so main() can override
+_PLOTS_DIR: List[Path] = [ROOT_DIR / "analysis" / "plots"]  # mutable so main() can override
 
 
 def plots_dir() -> Path:

@@ -90,34 +90,38 @@ For each iteration CSV, the script classifies the outcome by reading only the
 
 | Status | Condition |
 |--------|-----------|
-| **converged** | `‖F‖ ≤ 1e-8` (i.e., `e_norm` on the final row ≤ 1e-8) |
-| **no_data** | CSV file is missing entirely |
-| **incomplete** | Optimisation stopped early (>1 iteration) without converging and without hitting maxiter (e.g., time-limit kill, crash before writing `# crashed`) |
-| **hit_maxiter** | Reached 1,000,000 iterations without converging |
-| **diverged** | `NaN` appeared in the `e_norm` column during the first few iterations (typically iteration 1) |
+| **converged** | `‖F‖ ≤ 1e-8` (last line = `# converged` and `e_norm` on final data row ≤ 1e-8) |
+| **no_data** | CSV file is missing entirely (set by `collect_results`, not by `classify_csv`) |
+| **incomplete** | File exists but can't be classified: too short, unparseable data line, or unknown/missing comment marker |
+| **not_converged** | Last line = `# did_not_converge` and iteration < 1,000,000 (optimisation stopped early without converging) |
+| **hit_maxiter** | Last line = `# did_not_converge` and iteration ≥ 1,000,000 |
+| **diverged** | `NaN` appeared in the `e_norm` column during the first few iterations |
+| **crashed** | Last line = `# crashed` (exception caught by `hpc_worker.jl`) |
+| **error_should_be_converged** | Last line = `# converged` but `e_norm` > 1e-8 (logic error — should never happen) |
 
 ### Detailed Decision Tree
 
 ```
-Read CSV
-  ├─ File missing?              → no_data
-  ├─ NaN in e_norm (first rows)? → diverged
-  └─ Read last line
-       ├─ No "# converged" / "# did_not_converge" / "# crashed" comment?
-       │    └─ incomplete (killed mid-run)
-       ├─ "# crashed"?
-       │    └─ incomplete (exception during optimisation)
+Read CSV (classify_csv / get_csv_stats)
+  ├─ NaN in e_norm (first few data rows)? → diverged
+  ├─ File has < 2 non-empty lines?        → incomplete
+  ├─ Data line unparseable?                → incomplete
+  └─ Parse last 2 lines [data, comment]
        ├─ "# converged"?
        │    ├─ e_norm ≤ 1e-8  → converged ✓
-       │    └─ e_norm > 1e-8  → incomplete (shouldn't happen)
-       └─ "# did_not_converge"?
-            ├─ iteration ≥ 1,000,000 → hit_maxiter
-            └─ iteration < 1,000,000 → incomplete (stopped early)
+       │    └─ e_norm > 1e-8  → error_should_be_converged
+       ├─ "# did_not_converge"?
+       │    ├─ iteration ≥ 1,000,000 → hit_maxiter
+       │    └─ iteration < 1,000,000 → not_converged
+       ├─ "# crashed"?              → crashed
+       └─ Unknown / no comment       → incomplete
+
+Missing files are marked "no_data" by collect_results (never reach classify_csv).
 ```
 
 **Performance note**: The script only reads the first ~5 lines (for NaN scan) and
-the last line (via seek-based tail read), so it is fast even with 20k+ iteration
-CSV files.
+the last 2 lines (comment marker + final data row, via seek-based tail read),
+so it is fast even with 20k+ iteration CSV files.
 
 ---
 
@@ -129,7 +133,7 @@ All outputs are saved to the `analysis/` folder (or a custom `--out-dir`):
 |------|-------------|
 | `status_matrix.csv` | Full T × (rec_id, N, m) MultiIndex CSV. Each cell is one of: `converged`, `no_data`, `incomplete`, `hit_maxiter`, `diverged` |
 | `status_summary.csv` | Counts of each status per T value |
-| `cases_to_rerun.csv` | Flat list of all non-converged cases (folder, T, rec_id, N, m, status) |
+| `cases_to_rerun.csv` | Flat list of all non-converged cases (T, rec_id, N, m, status) |
 | `rec_overview.csv` | Per-recurrence overview: one row per (T, rec_id) with aggregated stats |
 
 ### `rec_overview.csv` Columns

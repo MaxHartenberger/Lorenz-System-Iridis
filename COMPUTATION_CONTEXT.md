@@ -65,6 +65,9 @@ julia scripts/generate_task_list.jl --T 40 --N-min 10 --m-min 10
 # T80 — skip N=5,10 and m=5,10:
 julia scripts/generate_task_list.jl --T 80 --N-min 20 --m-min 20
 
+# T160 — skip N=5,10, 20 and m=5,10,20:
+julia scripts/generate_task_list.jl --T 160 --N-min 40 --m-min 40
+
 # Limit recurrences per T:
 julia scripts/generate_task_list.jl --T 5,10,20 --max-records 50
 ```

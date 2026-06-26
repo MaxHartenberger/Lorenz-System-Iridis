@@ -43,7 +43,16 @@ MAXITER = 1_000_000
 CONVERGENCE_TOL = 1e-8
 
 STATUS_DTYPE = pd.CategoricalDtype(
-    categories=["converged", "no_data", "incomplete", "hit_maxiter", "diverged"],
+    categories=[
+        "converged",
+        "no_data",
+        "incomplete",
+        "not_converged",
+        "hit_maxiter",
+        "diverged",
+        "crashed",
+        "error_should_be_converged",
+    ],
     ordered=False,
 )
 
@@ -150,19 +159,27 @@ def _read_first_lines(filepath: Path, n: int = 6) -> list[str]:
 def classify_csv(filepath: Path) -> str:
     """Return the status string for a single CSV file.
 
-    Only reads the first ~5 lines (NaN scan) and the last 2 lines
-    (comment marker + final data row), so it is fast even with 20k+ rows.
+    Reads only the first ~5 lines (NaN scan) and the last 2 lines (comment
+    marker + final data row), so it is fast even with 20k+ rows.
+
+    Decision logic:
+    - NaN in e_norm in first few data rows → "diverged"
+    - Last line = "# converged" and final ‖F‖ ≤ 1e-8 → "converged"
+    - Last line = "# converged" and final ‖F‖ > 1e-8 → "error_should_be_converged"
+    - Last line = "# did_not_converge" and iteration ≥ 1,000,000 → "hit_maxiter"
+    - Last line = "# did_not_converge" and iteration < 1,000,000 → "not_converged"
+    - Last line = "# crashed" → "crashed"
+    - Unknown / missing comment marker, or data line unparseable → "incomplete"
+    - File too short or read error → "incomplete"
     """
     try:
         # --- Scan first few data rows for NaN in e_norm (column index 1) ---
         head_lines = _read_first_lines(filepath, 6)
-        if len(head_lines) < 2:          # header only → something went wrong
-            return "incomplete"
-
-        for line in head_lines[1:]:       # skip header
-            parts = line.strip().split(",")
-            if len(parts) >= 2 and parts[1].strip() == "NaN":
-                return "diverged"
+        if len(head_lines) >= 2:
+            for line in head_lines[1:]:       # skip header
+                parts = line.strip().split(",")
+                if len(parts) >= 2 and parts[1].strip() == "NaN":
+                    return "diverged"
 
         # --- Read last 2 non-empty lines: [second-to-last data, comment] ---
         tail_lines = _read_tail_lines(filepath, n=2)
@@ -172,38 +189,33 @@ def classify_csv(filepath: Path) -> str:
         comment_line = tail_lines[-1].strip()
         data_line    = tail_lines[-2].strip()
 
-        # --- Parse the comment marker ---
+        # Parse data values from the second-to-last line
+        parts = data_line.split(",")
+        if len(parts) < 2:
+            return "incomplete"
+        try:
+            e_norm    = float(parts[1])
+            iteration = int(parts[0])
+        except (ValueError, IndexError):
+            return "incomplete"
+
         if comment_line == "# converged":
-            parts = data_line.split(",")
-            if len(parts) < 2:
-                return "incomplete"
-            try:
-                e_norm = float(parts[1])
-            except (ValueError, IndexError):
-                return "incomplete"
             if e_norm <= CONVERGENCE_TOL:
                 return "converged"
             else:
-                return "incomplete"  # shouldn't happen; marker says converged but F > tol
+                return "error_should_be_converged"  # shouldn't happen; marker says converged but F > tol
 
         elif comment_line == "# did_not_converge":
-            parts = data_line.split(",")
-            if len(parts) < 1:
-                return "incomplete"
-            try:
-                iteration = int(parts[0])
-            except (ValueError, IndexError):
-                return "incomplete"
             if iteration >= MAXITER:
                 return "hit_maxiter"
             else:
-                return "incomplete"  # stopped early without converging
+                return "not_converged"  # stopped early without converging
 
         elif comment_line == "# crashed":
-            return "incomplete"
+            return "crashed"
 
         else:
-            # Unknown or missing comment marker — treat as incomplete
+            # Unknown marker or legacy format without comment
             return "incomplete"
 
     except Exception:
@@ -254,10 +266,10 @@ def get_csv_stats(filepath: Path) -> tuple[str, float | None, float | None]:
             if iteration >= MAXITER:
                 return ("hit_maxiter", iteration, e_norm)
             else:
-                return ("incomplete", iteration, e_norm)
+                return ("not_converged", iteration, e_norm)
 
         elif comment_line == "# crashed":
-            return ("incomplete", iteration, e_norm)
+            return ("crashed", iteration, e_norm)
 
         else:
             # Unknown marker or legacy format without comment
@@ -416,7 +428,9 @@ def build_rec_overview(df_long: pd.DataFrame) -> pd.DataFrame:
     for col in STATUS_DTYPE.categories:
         if col not in counts.columns:
             counts[col] = 0
-    counts = counts[["converged", "diverged", "hit_maxiter", "incomplete"]]
+    # Keep all non-"no_data" status columns for the overview
+    data_cols = [c for c in STATUS_DTYPE.categories if c != "no_data"]
+    counts = counts[data_cols]
     counts["num_no_data"] = 49 - counts.sum(axis=1)  # missing CSVs
     counts = counts.rename(columns=lambda c: f"num_{c}" if c != "num_no_data" else c)
 
@@ -459,10 +473,11 @@ def build_rec_overview(df_long: pd.DataFrame) -> pd.DataFrame:
     # Placeholder for user to fill later
     overview["converged_T"] = np.nan
 
-    # Sort columns for readability
+    # Build column order dynamically from STATUS_DTYPE + stat columns
+    num_cols = [f"num_{c}" for c in data_cols] + ["num_no_data"]
     col_order = [
         "converged",
-        "num_converged", "num_diverged", "num_hit_maxiter", "num_incomplete", "num_no_data",
+        *num_cols,
         "best_N", "best_m", "best_iter",
         "min_N_converged", "min_m_converged",
         "median_iter",

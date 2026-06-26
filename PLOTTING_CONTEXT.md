@@ -23,7 +23,7 @@ python3 plot_results.py --dry-run
 
 ## Output Structure
 ```
-plots/python_plots/
+analysis/plots/
 ├── fig01_convergence_curves/    # Per-recurrence ‖F‖ vs iter (subplots by N, varying m)
 │   └── fig01_T{target}_rec{id}.{pdf,png}
 ├── fig06_iterations_heatmap/    # Per-recurrence 7×7 (N×m) heatmaps
