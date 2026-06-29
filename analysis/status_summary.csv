@@ -2,3 +2,5 @@ T,converged,no_data,incomplete,not_converged,hit_maxiter,diverged,crashed,error_
 T05,4109,0,0,0,0,0,7,0
 T10,4839,9,0,0,0,0,3,0
 T20,4824,14,0,0,0,7,6,0
+T40,564,338,0,0,0,0,127,0
+T80,2022,2360,0,0,0,5,268,0

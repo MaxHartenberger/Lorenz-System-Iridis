@@ -3,7 +3,7 @@
 #
 # Usage:
 #   julia scripts/generate_task_list.jl --T 5,10,20
-#   julia scripts/generate_task_list.jl --T 40 --N-min 10 --m-min 10
+#   julia scripts/generate_task_list.jl --T 40 --N-min 10 --m-min 10 --rec-min 4 --rec-max 84
 #   julia scripts/generate_task_list.jl --T 5,10,20 --max-records 50 --output my_tasks.txt
 # ============================================================================ #
 
@@ -25,6 +25,8 @@ function main()
     T_filter    = Float64[]   # empty = all T (fallback)
     N_min       = 0           # 0 = no filter
     m_min       = 0           # 0 = no filter
+    rec_min     = 0           # 0 = no lower bound
+    rec_max     = typemax(Int)  # no upper bound
     recurrences_dir = joinpath(@__DIR__, "..", "recurrences")
 
     i = 1
@@ -40,6 +42,10 @@ function main()
             N_min = parse(Int, ARGS[i+1]); i += 2
         elseif ARGS[i] == "--m-min" && i < length(ARGS)
             m_min = parse(Int, ARGS[i+1]); i += 2
+        elseif ARGS[i] == "--rec-min" && i < length(ARGS)
+            rec_min = parse(Int, ARGS[i+1]); i += 2
+        elseif ARGS[i] == "--rec-max" && i < length(ARGS)
+            rec_max = parse(Int, ARGS[i+1]); i += 2
         elseif ARGS[i] == "--recurrences-dir" && i < length(ARGS)
             recurrences_dir = ARGS[i+1]; i += 2
         else
@@ -71,6 +77,12 @@ function main()
             end
 
             rec_ids = get_rec_ids(csv_path, max_recs)
+            # Apply rec range filter
+            rec_ids = filter(r -> r >= rec_min && r <= rec_max, rec_ids)
+            if isempty(rec_ids)
+                println("T=$T  →  no recs in range [$rec_min, $rec_max] — skipping")
+                continue
+            end
             n = length(rec_ids) * length(Ns_use) * length(Ms_use)
             println("T=$T  →  $(length(rec_ids)) recs × $(length(Ns_use)) N × $(length(Ms_use)) m  =  $n tasks")
 
