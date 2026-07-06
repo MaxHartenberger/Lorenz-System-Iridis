@@ -1,23 +1,25 @@
 # ============================================================================ #
-# HPC WORKER (HOOKSTEP) — Run a SINGLE (T, rec_id, N, gmres_maxiter) case
+# HPC WORKER (LS_DIRECT) — Run a SINGLE (T, rec_id, N) case
 #
 # Designed to be launched by a SLURM job array.  Each array task calls this
-# script with the parameters for exactly one case, runs the Newton–GMRES
-# hookstep (trust-region) method, and saves the per-iteration CSV.
+# script with the parameters for exactly one case, runs the direct Newton
+# line-search method, and saves the per-iteration CSV.
 #
 # Usage:
-#   julia hpc_worker_hookstep.jl <T> <rec_id> <N> <gmres_maxiter> [--output-dir <path>] [--maxiter <n>]
+#   julia hpc_worker_lsdirect.jl <T> <rec_id> <N> [--output-dir <path>] [--maxiter <n>]
 #
 # Example:
-#   julia hpc_worker_hookstep.jl 5.0 1 20 10
-#   julia hpc_worker_hookstep.jl 20.0 3 40 20 --output-dir /scratch/user/output
+#   julia hpc_worker_lsdirect.jl 5.0 1 20
+#   julia hpc_worker_lsdirect.jl 20.0 3 40 --output-dir /scratch/user/output
 #
 # Exit codes:
 #   0 – converged
 #   1 – did not converge
 #   2 – error / exception
 #
-# Output saved to:  <output-dir>/T{XX}/data_hookstep/rec{XXX}/iteration/N{XX}_gmres{XX}.csv
+# NOTE: ls_direct only works with single thread (--cpus-per-task=1).
+#
+# Output saved to:  <output-dir>/T{XX}/data_lsdirect/rec{XXX}/iteration/N{XX}.csv
 # ============================================================================ #
 
 # ---------------------------------------------------------------------------- #
@@ -41,31 +43,31 @@ const Δt      = 0.01
 const MM      = RK4
 const u0      = Float64[1, 1, 1]
 
-# Nonlinear flow G — SAME as L-BFGS worker (NormalMode + TimeStepConstant)
+# Nonlinear flow G — same as hookstep / L-BFGS worker (NormalMode + TimeStepConstant)
 const ϕ = flow(F_rhs, MM(u0), TimeStepConstant(Δt))
 
 # ---------------------------------------------------------------------------- #
 # 2.  Parse command-line arguments
 # ---------------------------------------------------------------------------- #
 function parse_args()
-    if length(ARGS) < 4
-        println(stderr, "Usage: julia hpc_worker_hookstep.jl <T> <rec_id> <N> <gmres_maxiter> [--recurrences-dir <path>] [--output-dir <path>] [--maxiter <n>]")
+    if length(ARGS) < 3
+        println(stderr, "Usage: julia hpc_worker_lsdirect.jl <T> <rec_id> <N> [--recurrences-dir <path>] [--output-dir <path>] [--maxiter <n>] [--ls-maxiter <n>]")
         exit(2)
     end
 
-    T           = parse(Float64, ARGS[1])
-    rec_id      = parse(Int, ARGS[2])
-    N           = parse(Int, ARGS[3])
-    gmres_max   = parse(Int, ARGS[4])
+    T      = parse(Float64, ARGS[1])
+    rec_id = parse(Int, ARGS[2])
+    N      = parse(Int, ARGS[3])
 
     # Default paths (relative to this script's location)
     script_dir = @__DIR__
     recurrences_dir = joinpath(script_dir, "..", "recurrences")
     output_dir      = joinpath(script_dir, "..", "outputs")
-    maxiter         = 1000       # Newton iterations (much smaller than L-BFGS's 1e6)
+    maxiter         = 10000       # Newton iterations
+    ls_maxiter      = 30         # line-search iterations per Newton step
 
     # Parse optional flags
-    i = 5
+    i = 4
     while i <= length(ARGS)
         if ARGS[i] == "--recurrences-dir" && i < length(ARGS)
             recurrences_dir = ARGS[i+1]
@@ -76,17 +78,20 @@ function parse_args()
         elseif ARGS[i] == "--maxiter" && i < length(ARGS)
             maxiter = parse(Int, ARGS[i+1])
             i += 2
+        elseif ARGS[i] == "--ls-maxiter" && i < length(ARGS)
+            ls_maxiter = parse(Int, ARGS[i+1])
+            i += 2
         else
             println(stderr, "Unknown argument: $(ARGS[i])")
             exit(2)
         end
     end
 
-    return T, rec_id, N, gmres_max, recurrences_dir, output_dir, maxiter
+    return T, rec_id, N, recurrences_dir, output_dir, maxiter, ls_maxiter
 end
 
 # ---------------------------------------------------------------------------- #
-# 3.  Load a specific recurrence from CSV  (same as L-BFGS worker)
+# 3.  Load a specific recurrence from CSV  (same as L-BFGS / hookstep)
 # ---------------------------------------------------------------------------- #
 """
     load_one_recurrence(csv_path::String, rec_id::Int)
@@ -109,21 +114,13 @@ function load_one_recurrence(csv_path::String, rec_id::Int)
 end
 
 # ---------------------------------------------------------------------------- #
-# 4.  Build forward linearised flow L  (hookstep: couple + NormalMode + TimeStepConstant)
+# 4.  Build forward linearised flow L  (same couple pattern as hookstep)
 # ---------------------------------------------------------------------------- #
 """
     build_linearised_flow()
 
-Constructs the forward tangent-linear flow L for the hookstep method.
-
-Uses `Flows.couple(F_rhs, D_lin)` to pair the nonlinear RHS with the
-linearised Lorenz RHS.  The linearised RHS `LorenzEq.LorenzLin(false, 28.0)`
-has a 5-argument method `(t, u, dudt, v, dvdt)` compatible with `Flows.couple`.
-
-Key differences from L-BFGS:
-  - Uses `Flows.NormalMode()` (not `DiscreteMode`).
-  - Uses `TimeStepConstant` (not `TimeStepFromCache`).
-  - No adjoint flow needed.
+Constructs the forward tangent-linear flow L using the couple pattern.
+Same as the hookstep worker: NormalMode + TimeStepConstant, no adjoint.
 """
 function build_linearised_flow()
     D_lin = LorenzEq.LorenzLin(false, 28.0)   # 5-arg: (t, u, dudt, v, dvdt)
@@ -136,15 +133,15 @@ function build_linearised_flow()
 end
 
 # ---------------------------------------------------------------------------- #
-# 5.  Save per-iteration history as CSV  (same format as L-BFGS)
+# 5.  Save per-iteration history as CSV  (same format as L-BFGS / hookstep)
 # ---------------------------------------------------------------------------- #
-function save_history_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int,
+function save_history_csv(outdir::String, rec_id::Int, N::Int,
                           iter::Vector{Int},
                           e_norm::Vector{Float64},
                           grad_norm::Vector{Float64},
                           lambda::Vector{Float64},
                           T_curr::Vector{Float64})
-    fname = @sprintf("N%02d_gmres%02d.csv", N, gmres_max)
+    fname = @sprintf("N%02d.csv", N)
     rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id), "iteration")
     mkpath(rec_dir)
     fpath = joinpath(rec_dir, fname)
@@ -161,15 +158,15 @@ function save_history_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int,
 end
 
 # ---------------------------------------------------------------------------- #
-# 5b.  Save converged trajectory as CSV  (same as L-BFGS worker)
+# 5b.  Save converged trajectory as CSV
 # ---------------------------------------------------------------------------- #
 """
-    save_trajectory_csv(outdir, rec_id, N, gmres_max, z0, ϕ)
+    save_trajectory_csv(outdir, rec_id, N, z0, ϕ)
 
 Integrates the converged multi-shooting orbit and saves all phase-space
 points to a CSV with columns: `t, x, y, z, segment`.
 """
-function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int,
+function save_trajectory_csv(outdir::String, rec_id::Int, N::Int,
                              z0, ϕ_flow)
     T_final = z0.d[1]          # converged period
     T_seg   = T_final / N       # time per shooting segment
@@ -177,7 +174,7 @@ function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int
 
     rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id), "trajectory")
     mkpath(rec_dir)
-    fname   = @sprintf("N%02d_gmres%02d_trajectory.csv", N, gmres_max)
+    fname   = @sprintf("N%02d_trajectory.csv", N)
     fpath   = joinpath(rec_dir, fname)
 
     open(fpath, "w") do io
@@ -198,12 +195,12 @@ function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int
 end
 
 # ---------------------------------------------------------------------------- #
-# 6.  Run hookstep for a SINGLE (rec_id, N, gmres_maxiter) combination
+# 6.  Run ls_direct for a SINGLE (rec_id, N) combination
 # ---------------------------------------------------------------------------- #
-function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
+function run_single_case(T::Float64, rec_id::Int, N::Int,
                          u_rec, T_guess,
                          L_flow,
-                         data_dir::String, maxiter::Int)
+                         data_dir::String, maxiter::Int, ls_maxiter::Int)
 
     # --- 6a.  Build initial guess z0 ------------------------------------------
     z0_seeds = [copy(u_rec) for _ in 1:N]
@@ -213,8 +210,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
     z0 = MVector((copy.(z0_seeds)...,), T_guess)
 
     # --- 6b.  Callback for per-iteration history ------------------------------
-    # Same 7-argument signature as L-BFGS callback.
-    # In the hookstep: ∇ϕ_norm ≡ 0.0, λ ≡ 1.0 (placeholders).
+    # Same 7-argument signature as L-BFGS / hookstep callback.
     history_iter      = Int[]
     history_e_norm    = Float64[]
     history_grad_norm = Float64[]
@@ -224,34 +220,21 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
     cb = (iter, z, Fz, e_norm, ∇ϕ_norm, λ, T_cur) -> begin
         push!(history_iter,      iter)
         push!(history_e_norm,    e_norm)
-        push!(history_grad_norm, ∇ϕ_norm)   # 0.0 in hookstep
-        push!(history_lambda,    λ)          # 1.0 in hookstep
+        push!(history_grad_norm, ∇ϕ_norm)
+        push!(history_lambda,    λ)
         push!(history_T,         T_cur)
         return false   # never stop early
     end
 
     # --- 6c.  Options ---------------------------------------------------------
     opts = Options(
-        method          = :tr_iterative,
+        method          = :ls_direct,
         maxiter         = maxiter,
         e_norm_tol      = 1e-8,
         dz_norm_tol     = 0.0,
         verbose         = false,
         skipiter        = 1,
-
-        # --- GMRES options ---
-        gmres_maxiter   = gmres_max,
-        gmres_rtol      = 1e-3,
-        gmres_verbose   = false,
-        gmres_start     = dz -> (dz .*= 0; dz),
-
-        # --- Trust-region options ---
-        tr_radius_init  = 0.001,
-        tr_radius_max   = 1e8,
-        min_step        = 1e-4,
-        NR_lim          = 1e-8,
-        eta             = 0.0,
-        α               = 1.0,
+        ls_maxiter      = ls_maxiter,
 
         # --- Callback ---
         callback        = cb,
@@ -260,7 +243,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
     # Phase-locking condition
     phase_lock = (dxdt, x) -> F_rhs(0, x, dxdt)
 
-    # --- 6d.  Run the hookstep search -----------------------------------------
+    # --- 6d.  Run the line-search Newton search --------------------------------
     t_start = time()
     local converged, n_iter, elapsed, error_msg, final_normF
     error_msg = ""
@@ -269,7 +252,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
         search!(ϕ, L_flow, phase_lock, z0, opts)
     catch err
         elapsed = time() - t_start
-        fpath_crash = save_history_csv(data_dir, rec_id, N, gmres_max,
+        fpath_crash = save_history_csv(data_dir, rec_id, N,
                                        history_iter, history_e_norm,
                                        history_grad_norm, history_lambda, history_T)
         open(fpath_crash, "a") do io
@@ -288,7 +271,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
     converged   = n_iter > 0 && final_normF < 1e-8
 
     # --- 6f.  Save CSV --------------------------------------------------------
-    fpath = save_history_csv(data_dir, rec_id, N, gmres_max,
+    fpath = save_history_csv(data_dir, rec_id, N,
                              history_iter, history_e_norm,
                              history_grad_norm, history_lambda, history_T)
 
@@ -299,13 +282,13 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
 
     # --- 6g.  Save trajectory if converged ------------------------------------
     if converged
-        save_trajectory_csv(data_dir, rec_id, N, gmres_max, z0, ϕ)
+        save_trajectory_csv(data_dir, rec_id, N, z0, ϕ)
     end
 
     # --- 6h.  Status line -----------------------------------------------------
     status = converged ? "CONVERGED" : "DID NOT CONVERGE"
-    @printf("T=%.1f  rec_id=%d  N=%d  gmres=%d  |  %s  ‖F‖=%.3e  T_final=%.6f  %d it  %.1f s  → %s\n",
-            T, rec_id, N, gmres_max, status, final_normF, z0.d[1], n_iter, elapsed, fpath)
+    @printf("T=%.1f  rec_id=%d  N=%d  |  %s  ‖F‖=%.3e  T_final=%.6f  %d it  %.1f s  → %s\n",
+            T, rec_id, N, status, final_normF, z0.d[1], n_iter, elapsed, fpath)
 
     return (converged=converged, final_T=z0.d[1], final_normF=final_normF,
             n_iter=n_iter, elapsed=elapsed, error_msg=error_msg)
@@ -316,7 +299,7 @@ end
 # ---------------------------------------------------------------------------- #
 function main()
     # Parse command line
-    T, rec_id, N, gmres_max, recurrences_dir, output_dir, maxiter = parse_args()
+    T, rec_id, N, recurrences_dir, output_dir, maxiter, ls_maxiter = parse_args()
 
     T_label  = @sprintf("T%02d", round(Int, T))
     csv_path = joinpath(recurrences_dir, T_label, "recurrences.csv")
@@ -330,10 +313,10 @@ function main()
     u_rec, T_guess = load_one_recurrence(csv_path, rec_id)
 
     # Set up output directory
-    data_dir = joinpath(output_dir, T_label, "data_hookstep")
+    data_dir = joinpath(output_dir, T_label, "data_lsdirect")
     mkpath(data_dir)
 
-    # Build linearised flow (hookstep style: couple + NormalMode + TimeStepConstant)
+    # Build linearised flow (same couple pattern as hookstep)
     # Warm up ϕ first so TimeStepConstant cache is populated
     warmup = copy(u_rec)
     ϕ(warmup, (0, 10 * Δt))
@@ -341,22 +324,22 @@ function main()
 
     # Print job header
     println("="^72)
-    println("  HPC Worker — Single Hookstep Case")
-    println("  T         = $T")
-    println("  rec_id    = $rec_id")
-    println("  N         = $N  (shooting segments)")
-    println("  gmres_max = $gmres_max  (Krylov subspace dim)")
-    println("  T_guess   = $T_guess")
-    println("  u_rec     = [$(round(u_rec[1], digits=6)), $(round(u_rec[2], digits=6)), $(round(u_rec[3], digits=6))]")
-    println("  maxiter   = $maxiter  (Newton iterations)")
-    println("  output    = $data_dir")
-    println("  started   = $(now())")
+    println("  HPC Worker — Single ls_direct Case")
+    println("  T          = $T")
+    println("  rec_id     = $rec_id")
+    println("  N          = $N  (shooting segments)")
+    println("  T_guess    = $T_guess")
+    println("  u_rec      = [$(round(u_rec[1], digits=6)), $(round(u_rec[2], digits=6)), $(round(u_rec[3], digits=6))]")
+    println("  maxiter    = $maxiter  (Newton iterations)")
+    println("  ls_maxiter = $ls_maxiter  (line-search iterations)")
+    println("  output     = $data_dir")
+    println("  started    = $(now())")
     println("="^72)
     println()
 
     # Run the case
-    result = run_single_case(T, rec_id, N, gmres_max, u_rec, T_guess,
-                             L_flow, data_dir, maxiter)
+    result = run_single_case(T, rec_id, N, u_rec, T_guess,
+                             L_flow, data_dir, maxiter, ls_maxiter)
 
     println()
     println("Finished at $(now())")
