@@ -53,7 +53,7 @@ The script reads from the `outputs/` directory:
 
 ```
 outputs/
-├── T05/data/
+├── T05/data_lbfgs/
 │   ├── rec001/
 │   │   └── iteration/             # per-iteration L-BFGS history
 │   │       ├── N05_m05.csv
@@ -61,7 +61,7 @@ outputs/
 │   │       └── ...  (49 combos: 7 N × 7 m)
 │   ├── rec002/ ...
 │   └── recXXX/ ...
-├── T10/data/ ...
+├── T10/data_lbfgs/ ...
 └── ...
 ```
 

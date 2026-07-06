@@ -4,7 +4,7 @@ plot_results.py
 ===============
 Generates plots from L-BFGS periodic-orbit search results on the Lorenz system.
 
-Reads per-iteration CSV files (outputs/T{XX}/data/rec{XXX}/iteration/N{XX}_m{XX}.csv)
+Reads per-iteration CSV files (outputs/T{XX}/data_lbfgs/rec{XXX}/iteration/N{XX}_m{XX}.csv)
 to determine convergence status, actual converged period T, and iteration counts.
 Loads full CSV data on demand for convergence-curve plots (fig1).
 
@@ -294,13 +294,13 @@ def _discover_recurrences(data_dir: Path) -> List[Tuple[float, int]]:
     """Scan the outputs/ directory and return a sorted list of (T_target, rec_id)
     pairs for all recurrences that have at least one CSV file."""
     recs_set: set = set()
-    # Pattern: outputs/T{XX}/data/rec{XXX}/iteration/N{XX}_m{XX}.csv
+    # Pattern: outputs/T{XX}/data_lbfgs/rec{XXX}/iteration/N{XX}_m{XX}.csv
     # Use resolve() for consistent absolute path parts indexing.
     data_dir_resolved = data_dir.resolve()
-    for csv_path in sorted(data_dir.glob("T*/data/rec*/iteration/N*.csv")):
+    for csv_path in sorted(data_dir.glob("T*/data_lbfgs/rec*/iteration/N*.csv")):
         parts = csv_path.resolve().parts
-        # parts: .../outputs/T05/data/rec001/iteration/N05_m05.csv
-        # Index from end: [-1]=filename, [-2]=iteration, [-3]=recNNN, [-4]=data, [-5]=TNN
+        # parts: .../outputs/T05/data_lbfgs/rec001/iteration/N05_m05.csv
+        # Index from end: [-1]=filename, [-2]=iteration, [-3]=recNNN, [-4]=data_lbfgs, [-5]=TNN
         try:
             t_dir = parts[-5]   # e.g. "T05"
             rec_dir = parts[-3] # e.g. "rec001"
@@ -327,7 +327,7 @@ def load_all_data(data_dir: Optional[Path] = None) -> List[RecurrenceData]:
     for T_target, rec_id in all_recs:
         rec = RecurrenceData(T_target, rec_id)
         T_label = f"T{int(T_target):02d}"
-        rec_dir = data_dir / T_label / "data" / f"rec{rec_id:03d}" / "iteration"
+        rec_dir = data_dir / T_label / "data_lbfgs" / f"rec{rec_id:03d}" / "iteration"
 
         for N in NS:
             for m in MS:
@@ -351,7 +351,7 @@ def load_csv_data(rec: RecurrenceData, N: int, m: int) -> Optional[pd.DataFrame]
     """Load a single iteration CSV and return as DataFrame with columns
     iter, e_norm, grad_norm, lambda, T_curr.  Returns None if file missing or unreadable."""
     T_label = f"T{int(rec.T_target):02d}"
-    csv_path = DATA_DIR / T_label / "data" / f"rec{rec.rec_id:03d}" / "iteration" / f"N{N:02d}_m{m:02d}.csv"
+    csv_path = DATA_DIR / T_label / "data_lbfgs" / f"rec{rec.rec_id:03d}" / "iteration" / f"N{N:02d}_m{m:02d}.csv"
     if not csv_path.is_file():
         return None
     try:

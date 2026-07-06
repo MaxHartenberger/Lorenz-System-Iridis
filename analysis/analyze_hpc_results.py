@@ -12,8 +12,8 @@ and classifies every (T, rec_id, N, m) case as one of:
     diverged     –  NaN appeared in the error norm during iteration 1
 
 Reads from a single ``outputs/`` directory with the structure:
-    outputs/TXX/data/recXXX/iteration/NXX_mXX.csv
-    outputs/TXX/data/recXXX/trajectory/NXX_mXX_trajectory.csv  (converged only)
+    outputs/TXX/data_lbfgs/recXXX/iteration/NXX_mXX.csv
+    outputs/TXX/data_lbfgs/recXXX/trajectory/NXX_mXX_trajectory.csv  (converged only)
 
 Outputs (saved to --out-dir, default: analysis/):
     status_matrix.csv     –  full T × (rec_id, N, m) matrix (MultiIndex CSV)
@@ -301,7 +301,7 @@ def collect_results(output_root: Path) -> pd.DataFrame:
 
     for t_dir in t_dirs:
         T_label = t_dir.name  # e.g. "T05"
-        data_dir = t_dir / "data"
+        data_dir = t_dir / "data_lbfgs"
         if not data_dir.is_dir():
             continue
 

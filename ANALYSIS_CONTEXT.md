@@ -20,7 +20,7 @@ outputs/
 │   ├── sweep_<jobid>_<taskid>.out
 │   └── sweep_<jobid>_<taskid>.err
 │
-├── T05/data/
+├── T05/data_lbfgs/
 │   ├── rec001/
 │   │   ├── iteration/             # ← per-iteration L-BFGS history
 │   │   │   ├── N05_m05.csv
@@ -32,11 +32,11 @@ outputs/
 │   ├── rec002/ ...
 │   └── recXXX/ ...                (up to 100 recurrences per T)
 │
-├── T10/data/ ...                  # same structure for T=10
-├── T20/data/ ...
-├── T40/data/ ...
-├── T80/data/ ...
-└── T160/data/ ...
+├── T10/data_lbfgs/ ...                  # same structure for T=10
+├── T20/data_lbfgs/ ...
+├── T40/data_lbfgs/ ...
+├── T80/data_lbfgs/ ...
+└── T160/data_lbfgs/ ...
 ```
 
 ### CSV Formats
@@ -208,7 +208,7 @@ COMPUTATION_CONTEXT.md             ANALYSIS_CONTEXT.md (this file)
 scripts/find_recurrences.jl         analysis/analyze_hpc_results.py
         │                                   │
         ▼                                   ▼
-scripts/generate_task_list.jl       Reads outputs/*/data/rec*/iteration/*.csv
+scripts/generate_task_list.jl       Reads outputs/*/data_lbfgs/rec*/iteration/*.csv
         │                                   │
         ▼                                   ▼
 scripts/hpc_worker.jl (HPC)         Produces analysis/status_matrix.csv,

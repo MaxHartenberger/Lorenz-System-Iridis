@@ -1,21 +1,23 @@
 # ============================================================================ #
-# HPC WORKER — Run a SINGLE (T, rec_id, N, m) L-BFGS case
+# HPC WORKER (HOOKSTEP) — Run a SINGLE (T, rec_id, N, gmres_maxiter) case
 #
 # Designed to be launched by a SLURM job array.  Each array task calls this
-# script with the parameters for exactly one case, runs L-BFGS, and saves the
-# per-iteration CSV.
+# script with the parameters for exactly one case, runs the Newton–GMRES
+# hookstep (trust-region) method, and saves the per-iteration CSV.
 #
 # Usage:
-#   julia hpc_worker.jl <T> <rec_id> <N> <m> [--recurrences-dir <path>] [--output-dir <path>]
+#   julia hpc_worker_hookstep.jl <T> <rec_id> <N> <gmres_maxiter> [--output-dir <path>] [--maxiter <n>]
 #
 # Example:
-#   julia hpc_worker.jl 5.0 3 10 5
-#   julia hpc_worker.jl 20.0 7 20 10 --output-dir /scratch/user/output
+#   julia hpc_worker_hookstep.jl 5.0 1 20 10
+#   julia hpc_worker_hookstep.jl 20.0 3 40 20 --output-dir /scratch/user/output
 #
 # Exit codes:
 #   0 – converged
 #   1 – did not converge
 #   2 – error / exception
+#
+# Output saved to:  <output-dir>/T{XX}/data_hookstep/rec{XXX}/iteration/N{XX}_gmres{XX}.csv
 # ============================================================================ #
 
 # ---------------------------------------------------------------------------- #
@@ -39,6 +41,7 @@ const Δt      = 0.01
 const MM      = RK4
 const u0      = Float64[1, 1, 1]
 
+# Nonlinear flow G — SAME as L-BFGS worker (NormalMode + TimeStepConstant)
 const ϕ = flow(F_rhs, MM(u0), TimeStepConstant(Δt))
 
 # ---------------------------------------------------------------------------- #
@@ -46,20 +49,20 @@ const ϕ = flow(F_rhs, MM(u0), TimeStepConstant(Δt))
 # ---------------------------------------------------------------------------- #
 function parse_args()
     if length(ARGS) < 4
-        println(stderr, "Usage: julia hpc_worker.jl <T> <rec_id> <N> <m> [--recurrences-dir <path>] [--output-dir <path>] [--maxiter <n>]")
+        println(stderr, "Usage: julia hpc_worker_hookstep.jl <T> <rec_id> <N> <gmres_maxiter> [--recurrences-dir <path>] [--output-dir <path>] [--maxiter <n>]")
         exit(2)
     end
 
-    T         = parse(Float64, ARGS[1])
-    rec_id    = parse(Int, ARGS[2])
-    N         = parse(Int, ARGS[3])
-    m         = parse(Int, ARGS[4])
+    T           = parse(Float64, ARGS[1])
+    rec_id      = parse(Int, ARGS[2])
+    N           = parse(Int, ARGS[3])
+    gmres_max   = parse(Int, ARGS[4])
 
     # Default paths (relative to this script's location)
     script_dir = @__DIR__
     recurrences_dir = joinpath(script_dir, "..", "recurrences")
-    output_dir      = joinpath(script_dir, "..", "output")
-    maxiter         = 1_000_000
+    output_dir      = joinpath(script_dir, "..", "outputs")
+    maxiter         = 50       # Newton iterations (much smaller than L-BFGS's 1e6)
 
     # Parse optional flags
     i = 5
@@ -79,11 +82,11 @@ function parse_args()
         end
     end
 
-    return T, rec_id, N, m, recurrences_dir, output_dir, maxiter
+    return T, rec_id, N, gmres_max, recurrences_dir, output_dir, maxiter
 end
 
 # ---------------------------------------------------------------------------- #
-# 3.  Load a specific recurrence from CSV
+# 3.  Load a specific recurrence from CSV  (same as L-BFGS worker)
 # ---------------------------------------------------------------------------- #
 """
     load_one_recurrence(csv_path::String, rec_id::Int)
@@ -106,34 +109,42 @@ function load_one_recurrence(csv_path::String, rec_id::Int)
 end
 
 # ---------------------------------------------------------------------------- #
-# 4.  Build linearised & adjoint flow operators
+# 4.  Build forward linearised flow L  (hookstep: couple + NormalMode + TimeStepConstant)
 # ---------------------------------------------------------------------------- #
-function build_linearised_flows()
-    D_lin = LorenzEq.LorenzLin(false, 28.0)
-    L_flow = flow(D_lin,
-                  RK4(zeros(3), Flows.DiscreteMode(false)),
-                  TimeStepFromCache())
+"""
+    build_linearised_flow()
 
-    D_adj_raw = LorenzEq.LorenzLin(true, 28.0)
-    L_adj_flow = flow(D_adj_raw,
-                      RK4(zeros(3), Flows.DiscreteMode(true)),
-                      TimeStepFromCache())
+Constructs the forward tangent-linear flow L for the hookstep method.
 
-    phase_lock = (dxdt, x) -> F_rhs(0, x, dxdt)
+Uses `Flows.couple(F_rhs, D_lin)` to pair the nonlinear RHS with the
+linearised Lorenz RHS.  The linearised RHS `LorenzEq.LorenzLin(false, 28.0)`
+has a 5-argument method `(t, u, dudt, v, dvdt)` compatible with `Flows.couple`.
 
-    return L_flow, L_adj_flow, phase_lock
+Key differences from L-BFGS:
+  - Uses `Flows.NormalMode()` (not `DiscreteMode`).
+  - Uses `TimeStepConstant` (not `TimeStepFromCache`).
+  - No adjoint flow needed.
+"""
+function build_linearised_flow()
+    D_lin = LorenzEq.LorenzLin(false, 28.0)   # 5-arg: (t, u, dudt, v, dvdt)
+
+    L = flow(Flows.couple(F_rhs, D_lin),
+             RK4(Flows.couple(zeros(3), zeros(3)), Flows.NormalMode()),
+             TimeStepConstant(Δt))
+
+    return L
 end
 
 # ---------------------------------------------------------------------------- #
-# 5.  Save per-iteration history as CSV
+# 5.  Save per-iteration history as CSV  (same format as L-BFGS)
 # ---------------------------------------------------------------------------- #
-function save_history_csv(outdir::String, rec_id::Int, N::Int, m::Int,
+function save_history_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int,
                           iter::Vector{Int},
                           e_norm::Vector{Float64},
                           grad_norm::Vector{Float64},
                           lambda::Vector{Float64},
                           T_curr::Vector{Float64})
-    fname = @sprintf("N%02d_m%02d.csv", N, m)
+    fname = @sprintf("N%02d_gmres%02d.csv", N, gmres_max)
     rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id), "iteration")
     mkpath(rec_dir)
     fpath = joinpath(rec_dir, fname)
@@ -150,42 +161,35 @@ function save_history_csv(outdir::String, rec_id::Int, N::Int, m::Int,
 end
 
 # ---------------------------------------------------------------------------- #
-# 5b.  Save converged trajectory as CSV (phase-space points along the orbit)
+# 5b.  Save converged trajectory as CSV  (same as L-BFGS worker)
 # ---------------------------------------------------------------------------- #
 """
-    save_trajectory_csv(outdir, rec_id, N, m, z0, ϕ)
+    save_trajectory_csv(outdir, rec_id, N, gmres_max, z0, ϕ)
 
 Integrates the converged multi-shooting orbit and saves all phase-space
 points to a CSV with columns: `t, x, y, z, segment`.
-
-The trajectory is built segment-by-segment: each shooting point z_i is
-integrated forward by T/N using the flow ϕ, collecting every Δt step.
 """
-function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, m::Int,
-                             z0, ϕ)
+function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, gmres_max::Int,
+                             z0, ϕ_flow)
     T_final = z0.d[1]          # converged period
     T_seg   = T_final / N       # time per shooting segment
     n_steps = round(Int, T_seg / Δt)
 
     rec_dir = joinpath(outdir, @sprintf("rec%03d", rec_id), "trajectory")
     mkpath(rec_dir)
-    fname   = @sprintf("N%02d_m%02d_trajectory.csv", N, m)
+    fname   = @sprintf("N%02d_gmres%02d_trajectory.csv", N, gmres_max)
     fpath   = joinpath(rec_dir, fname)
 
     open(fpath, "w") do io
         println(io, "t,x,y,z,segment")
         for seg in 1:N
-            # Extract shooting point for this segment (z0.x stores the seeds;
-            # z0.d only holds the scalar unknowns like T, not the state vectors)
             u = copy(z0.x[seg])
-
-            # Integrate forward for T_seg, writing every Δt step
             t_seg = (seg - 1) * T_seg   # global time at start of this segment
             for step in 0:n_steps
                 @printf(io, "%.10e,%.16e,%.16e,%.16e,%d\n",
                         t_seg + step * Δt, u[1], u[2], u[3], seg)
                 if step < n_steps
-                    ϕ(u, (0.0, Δt))   # integrate one Δt forward
+                    ϕ_flow(u, (0.0, Δt))   # integrate one Δt forward
                 end
             end
         end
@@ -194,11 +198,11 @@ function save_trajectory_csv(outdir::String, rec_id::Int, N::Int, m::Int,
 end
 
 # ---------------------------------------------------------------------------- #
-# 6.  Run L-BFGS for a SINGLE (rec_id, N, m) combination
+# 6.  Run hookstep for a SINGLE (rec_id, N, gmres_maxiter) combination
 # ---------------------------------------------------------------------------- #
-function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
+function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
                          u_rec, T_guess,
-                         L_flow, L_adj_flow, phase_lock,
+                         L_flow,
                          data_dir::String, maxiter::Int)
 
     # --- 6a.  Build initial guess z0 ------------------------------------------
@@ -208,49 +212,65 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
     end
     z0 = MVector((copy.(z0_seeds)...,), T_guess)
 
-    # --- 6b.  Build per-segment flow tuples -----------------------------------
-    Gs     = ntuple(_ -> deepcopy(ϕ), N)
-    Ls     = ntuple(_ -> deepcopy(L_flow), N)
-    Ls_adj = ntuple(_ -> deepcopy(L_adj_flow), N)
-
-    # --- 6c.  Callback for per-iteration history ------------------------------
+    # --- 6b.  Callback for per-iteration history ------------------------------
+    # Same 7-argument signature as L-BFGS callback.
+    # In the hookstep: ∇ϕ_norm ≡ 0.0, λ ≡ 1.0 (placeholders).
     history_iter      = Int[]
     history_e_norm    = Float64[]
     history_grad_norm = Float64[]
     history_lambda    = Float64[]
     history_T         = Float64[]
 
-    cb = (iter, z, Fz, f_norm, ∇ϕ_norm, λ, T) -> begin
+    cb = (iter, z, Fz, e_norm, ∇ϕ_norm, λ, T_cur) -> begin
         push!(history_iter,      iter)
-        push!(history_e_norm,    f_norm)
-        push!(history_grad_norm, ∇ϕ_norm)
-        push!(history_lambda,    λ)
-        push!(history_T,         z.d[1])
-        return false
+        push!(history_e_norm,    e_norm)
+        push!(history_grad_norm, ∇ϕ_norm)   # 0.0 in hookstep
+        push!(history_lambda,    λ)          # 1.0 in hookstep
+        push!(history_T,         T_cur)
+        return false   # never stop early
     end
 
-    # --- 6d.  Options ---------------------------------------------------------
+    # --- 6c.  Options ---------------------------------------------------------
     opts = Options(
-        method           = :lbfgs_opt,
-        maxiter          = maxiter,
-        dz_norm_tol      = 0.0,
-        e_norm_tol       = 1e-8,
-        verbose          = false,
-        ls_maxiter       = 30,
-        lbfgs_memory     = m,
-        callback         = cb,
+        method          = :tr_iterative,
+        maxiter         = maxiter,
+        e_norm_tol      = 1e-8,
+        dz_norm_tol     = 1e-10,
+        verbose         = false,
+        skipiter        = 1,
+
+        # --- GMRES options ---
+        gmres_maxiter   = gmres_max,
+        gmres_rtol      = 1e-3,
+        gmres_verbose   = false,
+        gmres_start     = dz -> (dz .*= 0; dz),
+
+        # --- Trust-region options ---
+        tr_radius_init  = 1.0,
+        tr_radius_max   = 1e8,
+        min_step        = 1e-4,
+        NR_lim          = 1e-8,
+        eta             = 0.0,
+        α               = 1.0,
+
+        # --- Callback ---
+        callback        = cb,
     )
 
-    # --- 6e.  Run the L-BFGS optimisation -------------------------------------
+    # Phase-locking condition
+    phase_lock = (dxdt, x) -> F_rhs(0, x, dxdt)
+
+    # --- 6d.  Run the hookstep search -----------------------------------------
     t_start = time()
-    local final_normF, converged, n_iter, elapsed, error_msg
-    error_msg = ""   # initialised here so success path has a value
+    local converged, n_iter, elapsed, error_msg, final_normF
+    error_msg = ""
 
     try
-        NKSearch._search!(Gs, Ls, Ls_adj, nothing, (phase_lock,), z0, opts)
+        search!(ϕ, L_flow, phase_lock, z0, opts)
     catch err
         elapsed = time() - t_start
-        fpath_crash = save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
+        fpath_crash = save_history_csv(data_dir, rec_id, N, gmres_max,
+                                       history_iter, history_e_norm,
                                        history_grad_norm, history_lambda, history_T)
         open(fpath_crash, "a") do io
             println(io, "# crashed")
@@ -262,17 +282,14 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
 
     elapsed = time() - t_start
 
-    # --- 6f.  Compute final residual ------------------------------------------
-    fwd_tmp = NKSearch.StageIterCache(Gs, Ls, nothing, (phase_lock,), z0)
-    b_tmp   = similar(z0)
-    NKSearch.update!(fwd_tmp, b_tmp, z0)
-    final_normF = norm(b_tmp)
+    # --- 6e.  Determine convergence from final callback e_norm ----------------
+    n_iter      = length(history_iter)
+    final_normF = n_iter > 0 ? history_e_norm[end] : NaN
+    converged   = n_iter > 0 && final_normF < 1e-8
 
-    converged = final_normF < 1e-8
-    n_iter    = length(history_iter)
-
-    # --- 6g.  Save CSV --------------------------------------------------------
-    fpath = save_history_csv(data_dir, rec_id, N, m, history_iter, history_e_norm,
+    # --- 6f.  Save CSV --------------------------------------------------------
+    fpath = save_history_csv(data_dir, rec_id, N, gmres_max,
+                             history_iter, history_e_norm,
                              history_grad_norm, history_lambda, history_T)
 
     # Append convergence status as a comment line (safe for CSV readers)
@@ -280,15 +297,15 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, m::Int,
         println(io, converged ? "# converged" : "# did_not_converge")
     end
 
-    # --- 6g-bis.  Save trajectory if converged --------------------------------
+    # --- 6g.  Save trajectory if converged ------------------------------------
     if converged
-        save_trajectory_csv(data_dir, rec_id, N, m, z0, ϕ)
+        save_trajectory_csv(data_dir, rec_id, N, gmres_max, z0, ϕ)
     end
 
     # --- 6h.  Status line -----------------------------------------------------
     status = converged ? "CONVERGED" : "DID NOT CONVERGE"
-    @printf("T=%.1f  rec_id=%d  N=%d  m=%d  |  %s  ‖F‖=%.3e  T_final=%.6f  %d it  %.1f s  → %s\n",
-            T, rec_id, N, m, status, final_normF, z0.d[1], n_iter, elapsed, fpath)
+    @printf("T=%.1f  rec_id=%d  N=%d  gmres=%d  |  %s  ‖F‖=%.3e  T_final=%.6f  %d it  %.1f s  → %s\n",
+            T, rec_id, N, gmres_max, status, final_normF, z0.d[1], n_iter, elapsed, fpath)
 
     return (converged=converged, final_T=z0.d[1], final_normF=final_normF,
             n_iter=n_iter, elapsed=elapsed, error_msg=error_msg)
@@ -299,7 +316,7 @@ end
 # ---------------------------------------------------------------------------- #
 function main()
     # Parse command line
-    T, rec_id, N, m, recurrences_dir, output_dir, maxiter = parse_args()
+    T, rec_id, N, gmres_max, recurrences_dir, output_dir, maxiter = parse_args()
 
     T_label  = @sprintf("T%02d", round(Int, T))
     csv_path = joinpath(recurrences_dir, T_label, "recurrences.csv")
@@ -313,34 +330,33 @@ function main()
     u_rec, T_guess = load_one_recurrence(csv_path, rec_id)
 
     # Set up output directory
-    data_dir = joinpath(output_dir, T_label, "data_lbfgs")
+    data_dir = joinpath(output_dir, T_label, "data_hookstep")
     mkpath(data_dir)
 
-    # Build linearised flows (must happen after ϕ has been used to build its cache)
-    # We warm up ϕ first so TimeStepFromCache has something to refer to.
+    # Build linearised flow (hookstep style: couple + NormalMode + TimeStepConstant)
+    # Warm up ϕ first so TimeStepConstant cache is populated
     warmup = copy(u_rec)
-    ϕ(warmup, (0, 10 * Δt))   # ensure the flow cache is populated
-    L_flow, L_adj_flow, phase_lock = build_linearised_flows()
+    ϕ(warmup, (0, 10 * Δt))
+    L_flow = build_linearised_flow()
 
     # Print job header
     println("="^72)
-    println("  HPC Worker — Single L-BFGS Case")
-    println("  T       = $T")
-    println("  rec_id  = $rec_id")
-    println("  N       = $N  (shooting segments)")
-    println("  m       = $m  (L-BFGS memory)")
-    println("  T_guess = $T_guess")
-    println("  u_rec   = [$(round(u_rec[1], digits=6)), $(round(u_rec[2], digits=6)), $(round(u_rec[3], digits=6))]")
-    println("  maxiter = $maxiter")
-    println("  output  = $data_dir")
-    println("  started = $(now())")
+    println("  HPC Worker — Single Hookstep Case")
+    println("  T         = $T")
+    println("  rec_id    = $rec_id")
+    println("  N         = $N  (shooting segments)")
+    println("  gmres_max = $gmres_max  (Krylov subspace dim)")
+    println("  T_guess   = $T_guess")
+    println("  u_rec     = [$(round(u_rec[1], digits=6)), $(round(u_rec[2], digits=6)), $(round(u_rec[3], digits=6))]")
+    println("  maxiter   = $maxiter  (Newton iterations)")
+    println("  output    = $data_dir")
+    println("  started   = $(now())")
     println("="^72)
     println()
 
     # Run the case
-    result = run_single_case(T, rec_id, N, m, u_rec, T_guess,
-                             L_flow, L_adj_flow, phase_lock,
-                             data_dir, maxiter)
+    result = run_single_case(T, rec_id, N, gmres_max, u_rec, T_guess,
+                             L_flow, data_dir, maxiter)
 
     println()
     println("Finished at $(now())")

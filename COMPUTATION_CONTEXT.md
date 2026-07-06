@@ -30,7 +30,7 @@ tasks.txt  (one line per case:  T rec_id N m)
     ↓
 first_sweep.slurm  +  hpc_worker.jl
     ↓
-output/TXX/data/recXXX/NXX_mXX.csv  (per-iteration history)
+output/TXX/data_lbfgs/recXXX/NXX_mXX.csv  (per-iteration history)
     ↓   final line of each CSV:
     # converged  |  # did_not_converge  |  # crashed
 ```
@@ -106,7 +106,7 @@ grep -r '# crashed' output/ | wc -l      # how many crashed
 
 ```
 output/
-├── T05/data/rec001/N05_m05.csv
+├── T05/data_lbfgs/rec001/N05_m05.csv
 │                  N05_m10.csv
 │                  ...
 │           rec002/...
@@ -143,5 +143,5 @@ To test one case before a full sweep:
 ```bash
 sbatch test_one_run.slurm
 # → runs hpc_worker.jl 5.0 1 5 5
-# → output in output/T05/data/rec001/N05_m05.csv
+# → output in output/T05/data_lbfgs/rec001/N05_m05.csv
 ```
