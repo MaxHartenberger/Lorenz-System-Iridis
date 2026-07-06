@@ -75,7 +75,7 @@ echo "N:            $N_VAL  (shooting segments)"
 echo "============================================================"
 
 # --- Run the ls_direct worker ---------------------------------------------- #
-julia scripts/hpc_worker_lsdirect.jl "$T_VAL" "$REC_VAL" "$N_VAL"
+julia -t 1 scripts/hpc_worker_lsdirect.jl "$T_VAL" "$REC_VAL" "$N_VAL"
 EXIT_CODE=$?
 
 echo ""

@@ -6,11 +6,11 @@
 # line-search method, and saves the per-iteration CSV.
 #
 # Usage:
-#   julia hpc_worker_lsdirect.jl <T> <rec_id> <N> [--output-dir <path>] [--maxiter <n>]
+#   julia -t 1 hpc_worker_lsdirect.jl <T> <rec_id> <N> [--output-dir <path>] [--maxiter <n>]
 #
 # Example:
-#   julia hpc_worker_lsdirect.jl 5.0 1 20
-#   julia hpc_worker_lsdirect.jl 20.0 3 40 --output-dir /scratch/user/output
+#   julia -t 1 hpc_worker_lsdirect.jl 5.0 1 20
+#   julia -t 1 hpc_worker_lsdirect.jl 20.0 3 40 --output-dir /scratch/user/output
 #
 # Exit codes:
 #   0 – converged
