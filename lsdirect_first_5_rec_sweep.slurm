@@ -75,7 +75,8 @@ echo "N:            $N_VAL  (shooting segments)"
 echo "============================================================"
 
 # --- Run the ls_direct worker ---------------------------------------------- #
-julia -t 1 scripts/hpc_worker_lsdirect.jl "$T_VAL" "$REC_VAL" "$N_VAL"
+# --compiled-modules=no forces NKSearch to recompile with thread support
+julia -t 1 --compiled-modules=no scripts/hpc_worker_lsdirect.jl "$T_VAL" "$REC_VAL" "$N_VAL"
 EXIT_CODE=$?
 
 echo ""
