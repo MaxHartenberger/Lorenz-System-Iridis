@@ -44,7 +44,7 @@ fi
 TS=(    5   10   20   40   80  160)   # 6 values
 RECS=(  1    2    3    4    5)        # 5 values
 NS=(    5   10   20   40   80  160  320)  # 7 values
-GMRES=( 5   10   20)                  # 3 values
+GMRES=( 5 ) #  10   20)                  # 3 values
 
 # --- Compute parameters from SLURM_ARRAY_TASK_ID (1-based) ----------------- #
 # Task ordering: for T in TS; for rec in RECS; for N in NS; for gmres in GMRES
