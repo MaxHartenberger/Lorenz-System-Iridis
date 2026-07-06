@@ -26,6 +26,14 @@ module load julia/1.12.4 || { echo "ERROR: Julia module not found"; exit 2; }
 cd "$SLURM_SUBMIT_DIR" || exit 2
 mkdir -p logs
 
+# --- Guard: must be submitted with --array ---
+if [ -z "${SLURM_ARRAY_TASK_ID}" ]; then
+    echo "ERROR: SLURM_ARRAY_TASK_ID is unset."
+    echo "You submitted without --array.  Use:"
+    echo "  sbatch --array=1-630 hookstep_first_5_rec_sweep.slurm"
+    exit 2
+fi
+
 # --- Self-generating task list (only task 1 does it; atomic mkdir lock) ---
 TASK_FILE="hookstep_tasks_${SLURM_ARRAY_JOB_ID}.txt"
 LOCK_DIR="hookstep_tasks_${SLURM_ARRAY_JOB_ID}.lock"

@@ -62,7 +62,7 @@ function parse_args()
     script_dir = @__DIR__
     recurrences_dir = joinpath(script_dir, "..", "recurrences")
     output_dir      = joinpath(script_dir, "..", "outputs")
-    maxiter         = 50       # Newton iterations (much smaller than L-BFGS's 1e6)
+    maxiter         = 1000       # Newton iterations (much smaller than L-BFGS's 1e6)
 
     # Parse optional flags
     i = 5
@@ -235,7 +235,7 @@ function run_single_case(T::Float64, rec_id::Int, N::Int, gmres_max::Int,
         method          = :tr_iterative,
         maxiter         = maxiter,
         e_norm_tol      = 1e-8,
-        dz_norm_tol     = 1e-10,
+        dz_norm_tol     = 0.0,
         verbose         = false,
         skipiter        = 1,
 
