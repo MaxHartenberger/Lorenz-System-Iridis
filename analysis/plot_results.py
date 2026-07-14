@@ -801,6 +801,80 @@ def plot_convergence_count_vs_T(recs: List[RecurrenceData]):
     print("  Saved.")
 
 
+# ---------------------------------------------------------------------------
+# fastest  —  Fastest converged bar chart with annotations, no colorbar
+# ---------------------------------------------------------------------------
+def plot_fastest_bar_annotated(recs: List[RecurrenceData]):
+    """Bar chart: height = iterations of the fastest converged (N,m) combo
+    for each recurrence.  Each bar annotated with orbit ID, final period T,
+    and the (N,m) combination.  No colorbar."""
+    print("\n" + "=" * 60)
+    print("  Fastest converged per recurrence (annotated bars, no colorbar)")
+    print("=" * 60)
+
+    # Gather fastest combo for each recurrence
+    fastest_iters: List[int] = []
+    fastest_nm: List[Tuple[int, int]] = []
+    for rec in recs:
+        best = rec.best_combos(1)
+        if best:
+            fastest_iters.append(best[0][1])
+            fastest_nm.append(best[0][0])
+        else:
+            fastest_iters.append(0)
+            fastest_nm.append((0, 0))
+
+    labels = [f"T={rec.T_target:g}\n#{rec.rec_id}" for rec in recs]
+
+    fig, ax = plt.subplots(figsize=(max(20, len(recs) * 0.18), 8))
+    ax.set_title("Fastest Converged (N,m) Combo per Recurrence",
+                 fontsize=14, fontweight="bold")
+
+    # Light-grey bars, no colour mapping  (no colorbar drawn)
+    ax.bar(range(len(recs)), fastest_iters, color="lightgrey",
+           edgecolor="none", width=0.85)
+
+    # Set log scale and force axis bottom to 1 BEFORE annotating so text
+    # positions are always inside the visible range.
+    ax.set_yscale("log")
+    ax.set_ylim(bottom=1.0)
+
+    # Annotate each bar with:  rec_id  |  T  |  (N,m)
+    for i, (rec, iters, nm) in enumerate(zip(recs, fastest_iters, fastest_nm)):
+        if iters <= 0:
+            continue
+        # Compact label:  #001  T≈5.4  N=20,m=40
+        label_text = (
+            f"#{rec.rec_id}  "
+            f"T≈{rec.representative_T:.1f}  "
+            f"N={nm[0]},m={nm[1]}"
+        )
+        # Anchor at the lower end of the bar: ~25% up in log-space,
+        # which is visually near the bottom.  Floor at 1.5 to stay
+        # clear of the axis line.  va="bottom" + rotation=90 means
+        # text starts here and extends upward.
+        y_pos = max(iters ** 0.25, 1.5)
+        ax.text(i, y_pos, label_text,
+                ha="center", va="bottom", fontsize=4,
+                rotation=90, color="black", fontweight="bold",
+                clip_on=False)
+
+    ax.set_xticks(range(len(recs)))
+    step = max(1, len(recs) // 30)
+    ax.set_xticklabels(
+        [labels[i] if i % step == 0 else "" for i in range(len(recs))],
+        rotation=90, fontsize=5,
+    )
+    ax.set_ylabel("Iterations of fastest converged combo (log scale)")
+    ax.grid(axis="y", alpha=0.3)
+    # --- NO colorbar (as requested) ---
+
+    fig.tight_layout()
+    savefigs(fig, "fastest_bar_annotated")
+    plt.close(fig)
+    print("  Saved.")
+
+
 # ===========================================================================
 #  PLOT REGISTRY
 #  Add new plot functions here.  Key = CLI name, value = (function, description)
@@ -820,6 +894,8 @@ PLOT_FUNCTIONS: Dict[str, Tuple[Callable[[List[RecurrenceData]], None], str]] = 
                 "Max iterations per recurrence with 3 best (N,m) combos overlaid"),
     "convcount": (plot_convergence_count_vs_T,
                   "Number of converged (N,m) combos per recurrence"),
+    "fastest": (plot_fastest_bar_annotated,
+                "Fastest converged (N,m) per recurrence — bars annotated with ID, T, (N,m); no colorbar"),
 }
 
 

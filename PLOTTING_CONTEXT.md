@@ -32,6 +32,7 @@ analysis/plots/
 ├── fig12b_min_m_vs_T.{pdf,png}  # Min m to converge vs actual T (one line per N)
 ├── maxiter_vs_T.{pdf,png}       # Max iterations (slowest converged) per recurrence
 ├── best3_combos_vs_T.{pdf,png}  # Max iterations + 3 best (N,m) overlaid
+├── fastest_bar_annotated.{pdf,png} # Fastest converged per recurrence — bars annotated with ID, T, (N,m)
 └── convcount_vs_T.{pdf,png}     # Number of converged combos per recurrence (out of 49)
 ```
 
@@ -45,6 +46,7 @@ analysis/plots/
 | `minM` | Min m to converge vs T | Scatter/line plot: x = actual converged period T, y = minimum m that converged. One line per N value. |
 | `maxiter` | Max iterations per recurrence | Column chart: x = recurrence (ordered by actual converged T), y = iterations of slowest converged (N,m). Color-coded by T. Log y-scale. |
 | `best3` | Best combos overlaid on maxiter | Same as maxiter but with the 3 fastest (N,m) combos shown as scatter markers. Annotated with (N,m) values. |
+| `fastest` | Fastest converged per recurrence | Column chart: x = recurrence, y = iterations of the fastest converged (N,m) combo. Light-grey bars annotated inside with orbit ID, final period T, and (N,m). No colorbar. |
 | `convcount` | Convergence count per recurrence | Column chart: x = recurrence, y = number of converged combos (out of 49 max). Color-coded by T. |
 
 ## Input Data Structure
