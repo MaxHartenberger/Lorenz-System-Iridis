@@ -32,5 +32,5 @@ Thumbs.db
 __pycache__/
 
 # --- Exclude plots and outputs----------------------------------------------------- #
-/analysis/plots/
+#/analysis/plots/
 /outputs/
