@@ -434,10 +434,10 @@ def build_rec_overview(df_long: pd.DataFrame) -> pd.DataFrame:
     counts["num_no_data"] = 49 - counts.sum(axis=1)  # missing CSVs
     counts = counts.rename(columns=lambda c: f"num_{c}" if c != "num_no_data" else c)
 
-    # Best by fewest iterations (among converged)
+    # Best by fewest iterations (among converged); ties broken by lower m
     best_iter = (
         converged.dropna(subset=["iter"])
-        .sort_values("iter")
+        .sort_values(["iter", "m"])
         .groupby(group_keys)
         .first()[["N", "m", "iter"]]
         .rename(columns={"N": "best_N", "m": "best_m", "iter": "best_iter"})
@@ -493,6 +493,120 @@ def build_rec_overview(df_long: pd.DataFrame) -> pd.DataFrame:
     overview = overview[["T", "rec_id"] + col_order]
 
     return overview
+
+
+def build_best_pair_summary(df_long: pd.DataFrame) -> pd.DataFrame:
+    """For each T, find the (N,m) pair most often the fastest across recurrences.
+
+    "Fastest" = fewest iterations to converge for a given recurrence.
+    For each (T, rec_id), the "winning" (N,m) is the one with the lowest
+    ``iter``.  If multiple (N,m) tie for the minimum, each gets a win.
+
+    This function tallies wins per (T, N, m) and reports, for each T:
+
+    - The (N,m) with the most wins (``best_N``, ``best_m``).
+    - How many recurrences it won (``win_count``).
+    - Total recurrences that had at least one converged combo
+      (``total_recs_with_converged``).
+    - ``win_fraction`` = win_count / total_recs_with_converged.
+    - The runner-up (N,m) and its win count, for context.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: T, best_N, best_m, win_count, total_recs_with_converged,
+        win_fraction, runner_up_N, runner_up_m, runner_up_wins
+    """
+    converged = (
+        df_long[(df_long["status"] == "converged")]
+        .dropna(subset=["iter"])
+        .copy()
+    )
+
+    empty_result = pd.DataFrame(columns=[
+        "T", "best_N", "best_m", "win_count",
+        "total_recs_with_converged", "win_fraction",
+        "runner_up_N", "runner_up_m", "runner_up_wins",
+    ])
+
+    if converged.empty:
+        return empty_result
+
+    # --- Step 1: for each (T, rec_id), find the row(s) with minimum iter ---
+    is_min = (
+        converged.groupby(["T", "rec_id"])["iter"]
+        .transform("min")
+        == converged["iter"]
+    )
+    winners = converged[is_min].copy()
+
+    # --- Step 2: count how many recurrences each (N,m) wins, per T ---
+    win_counts = (
+        winners.groupby(["T", "N", "m"])
+        .size()
+        .reset_index(name="win_count")
+    )
+
+    # --- Step 3: total recurrences (with ≥1 converged combo) per T ---
+    total_recs = (
+        converged.groupby("T")["rec_id"]
+        .nunique()
+        .reset_index(name="total_recs_with_converged")
+    )
+
+    # --- Step 4: rank (N,m) within each T by win_count ---
+    win_counts["rank"] = (
+        win_counts.groupby("T")["win_count"]
+        .rank(ascending=False, method="dense")
+    )
+
+    # Best pair (rank == 1); if tie, pick lower m then lower N
+    best = (
+        win_counts[win_counts["rank"] == 1]
+        .sort_values(["T", "m", "N"])
+        .groupby("T")
+        .first()
+        .reset_index()
+        [["T", "N", "m", "win_count"]]
+        .rename(columns={"N": "best_N", "m": "best_m"})
+    )
+
+    # Runner-up (rank == 2); same tie-breaking (lower m preferred)
+    runner_up = (
+        win_counts[win_counts["rank"] == 2]
+        .sort_values(["T", "m", "N"])
+        .groupby("T")
+        .first()
+        .reset_index()
+        [["T", "N", "m", "win_count"]]
+        .rename(columns={
+            "N": "runner_up_N",
+            "m": "runner_up_m",
+            "win_count": "runner_up_wins",
+        })
+    )
+
+    # --- Step 5: merge everything ---
+    result = best.merge(total_recs, on="T", how="left")
+    result = result.merge(runner_up, on="T", how="left")
+    result["win_fraction"] = (
+        result["win_count"] / result["total_recs_with_converged"]
+    )
+
+    # Natural T sort: T05, T10, T20, …
+    result["_T_num"] = result["T"].str.extract(r"(\d+)").astype(int)
+    result = (
+        result.sort_values("_T_num")
+        .drop(columns=["_T_num"])
+        .reset_index(drop=True)
+    )
+
+    col_order = [
+        "T", "best_N", "best_m", "win_count",
+        "total_recs_with_converged", "win_fraction",
+        "runner_up_N", "runner_up_m", "runner_up_wins",
+    ]
+    return result[col_order]
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +675,13 @@ def main():
     num_recs = len(overview)
     num_conv = (overview["converged"] == "yes").sum()
     print(f"\n  → saved {overview_path}  ({num_recs} recurrences, {num_conv} with ≥1 converged combo)")
+
+    # Best-pair summary (modal fastest (N,m) per T)
+    best_pair = build_best_pair_summary(df_long)
+    best_pair_path = out_dir / "best_pair_summary.csv"
+    best_pair.to_csv(best_pair_path, index=False)
+    print(f"\n  → saved {best_pair_path}")
+    print(best_pair.to_string(index=False))
 
     print("\nDone.")
 

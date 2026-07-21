@@ -108,9 +108,9 @@ class RecurrenceData:
         return self.num_converged > 0
 
     def get_converged_combos(self) -> List[Tuple[int, int]]:
-        """Return list of (N,m) that converged, sorted by iterations."""
+        """Return list of (N,m) that converged, sorted by iterations (then m on tie)."""
         conv = [(nm, c) for nm, c in self.combos.items() if c.status == "converged"]
-        conv.sort(key=lambda x: x[1].iterations)
+        conv.sort(key=lambda x: (x[1].iterations, x[0][1]))  # fewer iters, then lower m
         return [nm for nm, _ in conv]
 
     def compute_representative_T(self) -> None:
@@ -119,7 +119,7 @@ class RecurrenceData:
                 for nm, c in self.combos.items()
                 if c.status == "converged" and c.T_actual is not None]
         if conv:
-            conv.sort(key=lambda x: x[1])  # sort by iterations (fewest first)
+            conv.sort(key=lambda x: (x[1], x[2][1]))  # fewer iters, then lower m
             self.representative_T = conv[0][0]
             self.best_combo = conv[0][2]
         else:
@@ -132,11 +132,14 @@ class RecurrenceData:
         return max(iters) if iters else 0
 
     def best_combos(self, k: int = 3) -> List[Tuple[Tuple[int, int], int]]:
-        """Return the k (N,m) combos with fewest iterations among converged."""
+        """Return the k (N,m) combos with fewest iterations among converged.
+
+        Ties on iteration count are broken by lower m.
+        """
         conv = [(nm, c.iterations)
                 for nm, c in self.combos.items()
                 if c.status == "converged"]
-        conv.sort(key=lambda x: x[1])
+        conv.sort(key=lambda x: (x[1], x[0][1]))  # fewer iters, then lower m
         return conv[:k]
 
 
@@ -369,6 +372,31 @@ COLORS_N = {n: plt.cm.plasma(i / (len(NS) - 1)) for i, n in enumerate(NS)}
 MARKERS_M = {m: s for m, s in zip(MS, ["o", "s", "D", "^", "v", "p", "*"])}
 MARKERS_N = {n: s for n, s in zip(NS, ["o", "s", "D", "^", "v", "p", "*"])}
 
+# Discrete colours per T_target for aggregate bar charts (T05–T160).
+# Dark, strong, publication-friendly palette — 6 distinct colours.
+_T_TARGET_PALETTE = [
+    "#21618C",   # T05  — dark steel blue
+    "#C0392B",   # T10  — strong red
+    "#1E8449",   # T20  — forest green
+    "#B9770E",   # T40  — dark amber
+    "#7D3C98",   # T80  — dark purple
+    "#2C3E50",   # T160 — dark slate
+]
+_T_TARGETS_SORTED = sorted({5, 10, 20, 40, 80, 160})
+T_TARGET_COLORS = {t: _T_TARGET_PALETTE[i]
+                   for i, t in enumerate(_T_TARGETS_SORTED)}
+
+
+def _add_T_target_legend(ax: plt.Axes, T_targets_present: List[float]):
+    """Add a legend mapping each T_target to its discrete colour."""
+    from matplotlib.patches import Patch
+    handles = []
+    for t in sorted(T_targets_present):
+        label = f"T{t:g}" if t == int(t) else f"T≈{t:.1f}"
+        handles.append(Patch(color=T_TARGET_COLORS[t], label=label))
+    ax.legend(handles=handles, title="T target", fontsize=7,
+              title_fontsize=8, loc="upper right", ncol=2)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -554,93 +582,6 @@ def plot_fig6_iterations_heatmap(recs: List[RecurrenceData]):
 
 
 # ---------------------------------------------------------------------------
-# fig12a  —  Minimum N to converge vs actual T, one line per m
-# ---------------------------------------------------------------------------
-def plot_fig12a_min_N_vs_T(recs: List[RecurrenceData]):
-    """For each m value, find the minimum N that converged for each recurrence.
-    Plot as line+marker vs the actual converged T.  Points where no N converged
-    for that m are omitted."""
-    print("\n" + "=" * 60)
-    print("  Fig 12a: Minimum N to converge vs actual T")
-    print("=" * 60)
-
-    fig, ax = plt.subplots(figsize=(12, 7))
-    ax.set_title("Minimum Shooting Segments N for Convergence  (‖F‖ < 1e-8)",
-                 fontsize=13, fontweight="bold")
-
-    for m in MS:
-        pts: List[Tuple[float, int]] = []
-        for rec in recs:
-            converged_Ns = [N for N in NS
-                            if rec.combos.get((N, m)) is not None
-                            and rec.combos[(N, m)].status == "converged"]
-            if converged_Ns and rec.representative_T is not None:
-                pts.append((rec.representative_T, min(converged_Ns)))
-        if pts:
-            pts.sort()
-            T_vals = [p[0] for p in pts]
-            N_vals = [p[1] for p in pts]
-            marker = MARKERS_M[m]
-            ax.plot(T_vals, N_vals, f"-{marker}", color=COLORS_M[m],
-                    markersize=6, linewidth=1.2, label=f"m = {m}")
-
-    ax.set_xlabel("Actual converged orbit period T")
-    ax.set_ylabel("Minimum N to converge")
-    ax.set_yticks(NS)
-    ax.legend(loc="upper left", ncol=2, fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(0.5, max(NS) + 1)
-
-    fig.tight_layout()
-    savefigs(fig, "fig12a_min_N_vs_T")
-    plt.close(fig)
-    print("  Saved.")
-
-
-# ---------------------------------------------------------------------------
-# fig12b  —  Minimum m to converge vs actual T, one line per N
-# ---------------------------------------------------------------------------
-def plot_fig12b_min_m_vs_T(recs: List[RecurrenceData]):
-    """For each N value, find the minimum m that converged for each recurrence.
-    Plot as line+marker vs the actual converged T."""
-    print("\n" + "=" * 60)
-    print("  Fig 12b: Minimum m to converge vs actual T")
-    print("=" * 60)
-
-    fig, ax = plt.subplots(figsize=(12, 7))
-    ax.set_title("Minimum L-BFGS Memory m for Convergence  (‖F‖ < 1e-8)",
-                 fontsize=13, fontweight="bold")
-
-    for N in NS:
-        pts: List[Tuple[float, int]] = []
-        for rec in recs:
-            converged_ms = [m for m in MS
-                            if rec.combos.get((N, m)) is not None
-                            and rec.combos[(N, m)].status == "converged"]
-            if converged_ms and rec.representative_T is not None:
-                pts.append((rec.representative_T, min(converged_ms)))
-        if pts:
-            pts.sort()
-            T_vals = [p[0] for p in pts]
-            m_vals = [p[1] for p in pts]
-            marker = MARKERS_N[N]
-            ax.plot(T_vals, m_vals, f"-{marker}", color=COLORS_N[N],
-                    markersize=6, linewidth=1.2, label=f"N = {N}")
-
-    ax.set_xlabel("Actual converged orbit period T")
-    ax.set_ylabel("Minimum m to converge")
-    ax.set_yticks(MS)
-    ax.legend(loc="upper left", ncol=2, fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(0.5, max(MS) + 1)
-
-    fig.tight_layout()
-    savefigs(fig, "fig12b_min_m_vs_T")
-    plt.close(fig)
-    print("  Saved.")
-
-
-# ---------------------------------------------------------------------------
 # maxiter  —  Max iterations per recurrence vs T (column/bar chart)
 # ---------------------------------------------------------------------------
 def plot_maxiter_vs_T(recs: List[RecurrenceData]):
@@ -658,21 +599,19 @@ def plot_maxiter_vs_T(recs: List[RecurrenceData]):
     fig, ax = plt.subplots(figsize=(max(18, len(recs) * 0.15), 7))
     ax.set_title("Slowest Converged (N,m) per Recurrence", fontsize=14, fontweight="bold")
 
-    colors = [plt.cm.viridis(t / max(T_vals)) if max(T_vals) > 0 else "steelblue"
-              for t in T_vals]
-    bars = ax.bar(range(len(recs)), max_iters, color=colors, edgecolor="none", width=0.8)
+    # Discrete colour by T_target category (NOT continuous by T_actual)
+    colors = [T_TARGET_COLORS[rec.T_target] for rec in recs]
+    ax.bar(range(len(recs)), max_iters, color=colors, edgecolor="none", width=0.8)
 
-    # Color bar for T
-    sm = plt.cm.ScalarMappable(cmap="viridis", norm=Normalize(vmin=min(T_vals), vmax=max(T_vals)))
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, shrink=0.5, aspect=30, pad=0.02)
-    cbar.set_label("Actual converged period T")
+    # Discrete T-target legend instead of continuous colorbar
+    T_targets_present = sorted({rec.T_target for rec in recs})
+    _add_T_target_legend(ax, T_targets_present)
 
-    ax.set_xticks(range(len(recs)))
+    # ax.set_xticks(range(len(recs)))
     # Show only ~30 tick labels to avoid clutter
-    step = max(1, len(recs) // 30)
-    ax.set_xticklabels([labels[i] if i % step == 0 else "" for i in range(len(recs))],
-                       rotation=90, fontsize=5)
+    # step = max(1, len(recs) // 30)
+    # ax.set_xticklabels([labels[i] if i % step == 0 else "" for i in range(len(recs))],
+    #                    rotation=90, fontsize=5)
     ax.set_ylabel("Max iterations (slowest converged combo)")
     ax.set_yscale("log")
     ax.grid(axis="y", alpha=0.3)
@@ -733,22 +672,20 @@ def plot_best_combos_vs_T(recs: List[RecurrenceData]):
             nm_str = f"({best[0][0][0]},{best[0][0][1]})"
             ax.annotate(nm_str, (i, best[0][1]),
                         textcoords="offset points", xytext=(0, 8),
-                        fontsize=4, ha="center", rotation=90, alpha=0.7)
+                        fontsize=6, ha="center", rotation=90, alpha=0.7)
 
     ax.set_yscale("log")
-    ax.set_xticks(range(len(recs)))
-    step = max(1, len(recs) // 30)
-    ax.set_xticklabels([labels[i] if i % step == 0 else "" for i in range(len(recs))],
-                       rotation=90, fontsize=5)
+    # ax.set_xticks(range(len(recs)))
+    # step = max(1, len(recs) // 30)
+    # ax.set_xticklabels([labels[i] if i % step == 0 else "" for i in range(len(recs))],
+    #                   rotation=90, fontsize=5)
     ax.set_ylabel("Iterations (log scale)")
     ax.legend(loc="upper left", fontsize=8, ncol=3)
     ax.grid(axis="y", alpha=0.3)
 
-    # Add a color bar for T
-    sm = plt.cm.ScalarMappable(cmap="viridis", norm=Normalize(vmin=min(T_vals), vmax=max(T_vals)))
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, shrink=0.5, aspect=30, pad=0.02)
-    cbar.set_label("Actual converged period T")
+    # Discrete T-target legend instead of continuous colorbar
+    T_targets_present = sorted({rec.T_target for rec in recs})
+    _add_T_target_legend(ax, T_targets_present)
 
     fig.tight_layout()
     savefigs(fig, "best3_combos_vs_T")
@@ -774,23 +711,22 @@ def plot_convergence_count_vs_T(recs: List[RecurrenceData]):
     ax.set_title("Number of Converged (N,m) Combos per Recurrence (out of 49)",
                  fontsize=13, fontweight="bold")
 
-    colors = [plt.cm.viridis(t / max(T_vals)) if max(T_vals) > 0 else "steelblue"
-              for t in T_vals]
+    # Discrete colour by T_target category (NOT continuous by T_actual)
+    colors = [T_TARGET_COLORS[rec.T_target] for rec in recs]
     ax.bar(range(len(recs)), conv_counts, color=colors, edgecolor="none", width=0.8)
 
     ax.axhline(y=49, color="gray", linestyle="--", linewidth=0.8, alpha=0.5,
                label="Max possible (49)")
     ax.legend(fontsize=9)
 
-    sm = plt.cm.ScalarMappable(cmap="viridis", norm=Normalize(vmin=min(T_vals), vmax=max(T_vals)))
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, shrink=0.5, aspect=30, pad=0.02)
-    cbar.set_label("Actual converged period T")
+    # Discrete T-target legend instead of continuous colorbar
+    T_targets_present = sorted({rec.T_target for rec in recs})
+    _add_T_target_legend(ax, T_targets_present)
 
-    ax.set_xticks(range(len(recs)))
-    step = max(1, len(recs) // 30)
-    ax.set_xticklabels([labels[i] if i % step == 0 else "" for i in range(len(recs))],
-                       rotation=90, fontsize=5)
+    # ax.set_xticks(range(len(recs)))
+    # step = max(1, len(recs) // 30)
+    # ax.set_xticklabels([labels[i] if i % step == 0 else "" for i in range(len(recs))],
+    #                   rotation=90, fontsize=5)
     ax.set_ylabel("Number of converged combos")
     ax.set_ylim(0, 53)
     ax.grid(axis="y", alpha=0.3)
@@ -804,15 +740,16 @@ def plot_convergence_count_vs_T(recs: List[RecurrenceData]):
 # ---------------------------------------------------------------------------
 # fastest  —  Fastest converged bar chart with annotations, no colorbar
 # ---------------------------------------------------------------------------
-def plot_fastest_bar_annotated(recs: List[RecurrenceData]):
-    """Bar chart: height = iterations of the fastest converged (N,m) combo
-    for each recurrence.  Each bar annotated with orbit ID, final period T,
-    and the (N,m) combination.  No colorbar."""
-    print("\n" + "=" * 60)
-    print("  Fastest converged per recurrence (annotated bars, no colorbar)")
-    print("=" * 60)
 
-    # Gather fastest combo for each recurrence
+def _draw_fastest_bars(recs: List[RecurrenceData], title_extra: str,
+                       filename: str):
+    """Shared helper: draw a fastest-converged bar chart for a list of
+    recurrences (already sorted as desired).  Saves to *filename*."""
+    n = len(recs)
+    if n == 0:
+        print(f"  Skipping {filename} — no recurrences.")
+        return
+
     fastest_iters: List[int] = []
     fastest_nm: List[Tuple[int, int]] = []
     for rec in recs:
@@ -826,53 +763,187 @@ def plot_fastest_bar_annotated(recs: List[RecurrenceData]):
 
     labels = [f"T={rec.T_target:g}\n#{rec.rec_id}" for rec in recs]
 
-    fig, ax = plt.subplots(figsize=(max(20, len(recs) * 0.18), 8))
-    ax.set_title("Fastest Converged (N,m) Combo per Recurrence",
-                 fontsize=14, fontweight="bold")
+    fig, ax = plt.subplots(figsize=(max(8, n * 0.22), 7))
+    title = "Fastest Converged (N,m) Combo per Recurrence"
+    if title_extra:
+        title += f"  —  {title_extra}"
+    ax.set_title(title, fontsize=13, fontweight="bold")
 
-    # Light-grey bars, no colour mapping  (no colorbar drawn)
-    ax.bar(range(len(recs)), fastest_iters, color="lightgrey",
+    # Light-grey bars, no colour mapping
+    ax.bar(range(n), fastest_iters, color="lightgrey",
            edgecolor="none", width=0.85)
 
-    # Set log scale and force axis bottom to 1 BEFORE annotating so text
-    # positions are always inside the visible range.
+    # Log scale with axis bottom forced to 1 (before annotating)
     ax.set_yscale("log")
     ax.set_ylim(bottom=1.0)
 
-    # Annotate each bar with:  rec_id  |  T  |  (N,m)
+    # Annotate each bar
     for i, (rec, iters, nm) in enumerate(zip(recs, fastest_iters, fastest_nm)):
         if iters <= 0:
             continue
-        # Compact label:  #001  T≈5.4  N=20,m=40
         label_text = (
             f"#{rec.rec_id}  "
             f"T≈{rec.representative_T:.1f}  "
             f"N={nm[0]},m={nm[1]}"
         )
-        # Anchor at the lower end of the bar: ~25% up in log-space,
-        # which is visually near the bottom.  Floor at 1.5 to stay
-        # clear of the axis line.  va="bottom" + rotation=90 means
-        # text starts here and extends upward.
         y_pos = max(iters ** 0.25, 1.5)
         ax.text(i, y_pos, label_text,
-                ha="center", va="bottom", fontsize=4,
+                ha="center", va="bottom", fontsize=6,
                 rotation=90, color="black", fontweight="bold",
                 clip_on=False)
 
-    ax.set_xticks(range(len(recs)))
-    step = max(1, len(recs) // 30)
-    ax.set_xticklabels(
-        [labels[i] if i % step == 0 else "" for i in range(len(recs))],
-        rotation=90, fontsize=5,
-    )
+    # X-axis: show every tick, but label only ~30 to avoid clutter
+    # ax.set_xticks(range(n))
+    # step = max(1, n // 30)
+    # ax.set_xticklabels(
+    #    [labels[i] if i % step == 0 else "" for i in range(n)],
+    #    rotation=90, fontsize=5,
+    # )
+    ax.set_xlim(-0.6, n - 0.4)   # tighten side margins
     ax.set_ylabel("Iterations of fastest converged combo (log scale)")
     ax.grid(axis="y", alpha=0.3)
-    # --- NO colorbar (as requested) ---
 
     fig.tight_layout()
-    savefigs(fig, "fastest_bar_annotated")
+    savefigs(fig, filename)
     plt.close(fig)
-    print("  Saved.")
+    print(f"  Saved: {filename}")
+
+
+def plot_fastest_bar_annotated(recs: List[RecurrenceData]):
+    """All recurrences in one chart."""
+    print("\n" + "=" * 60)
+    print("  Fastest converged per recurrence (all T, annotated bars)")
+    print("=" * 60)
+    _draw_fastest_bars(recs, "all T", "fastest_bar_annotated")
+
+
+def plot_fastest_bar_by_T(recs: List[RecurrenceData]):
+    """One chart per T_target group (T05, T10, T20, T40, T80, T160)."""
+    print("\n" + "=" * 60)
+    print("  Fastest converged per recurrence — grouped by T target")
+    print("=" * 60)
+
+    # Group by T_target
+    by_T: Dict[float, List[RecurrenceData]] = defaultdict(list)
+    for rec in recs:
+        by_T[rec.T_target].append(rec)
+
+    for T_target in sorted(by_T.keys()):
+        group = by_T[T_target]
+        # Sort within group by representative_T, then rec_id
+        group.sort(key=lambda r: (r.representative_T if r.representative_T
+                                   else float("inf"), r.rec_id))
+        T_label = f"T{int(T_target):02d}"
+        title_extra = f"{T_label}  ({len(group)} orbits)"
+        filename = f"fastest_bar_annotated_{T_label}"
+        _draw_fastest_bars(group, title_extra, filename)
+
+
+# ---------------------------------------------------------------------------
+# agg_heatmaps  —  Per-T median-iterations & success-rate heatmaps
+# ---------------------------------------------------------------------------
+def plot_agg_heatmaps(recs: List[RecurrenceData]):
+    """For each T-target group, a two-panel figure: 7×7 (N×m) heatmaps of
+    (left) median iterations to convergence and (right) success rate
+    (fraction of recurrences that converged for that (N,m) combo)."""
+    print("\n" + "=" * 60)
+    print("  Aggregate heatmaps: median iterations & success rate per T")
+    print("=" * 60)
+
+    # Group recurrences by T_target
+    by_T: Dict[float, List[RecurrenceData]] = defaultdict(list)
+    for rec in recs:
+        by_T[rec.T_target].append(rec)
+
+    for T_target in sorted(by_T.keys()):
+        group = by_T[T_target]
+        T_label = f"T{int(T_target):02d}"
+        n_recs = len(group)
+
+        # Build 7×7 matrices: median iterations & success rate
+        median_mat = np.full((len(NS), len(MS)), np.nan)
+        success_mat = np.full((len(NS), len(MS)), np.nan)
+
+        for i, N in enumerate(NS):
+            for j, m in enumerate(MS):
+                iters = []
+                conv_count = 0
+                for rec in group:
+                    combo = rec.combos.get((N, m))
+                    if combo is not None and combo.status == "converged":
+                        iters.append(combo.iterations)
+                        conv_count += 1
+                if iters:
+                    median_mat[i, j] = np.median(iters)
+                    success_mat[i, j] = conv_count / n_recs
+
+        # --- Create figure with two subplots ---
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6.5))
+
+        # ---- Left panel: Median iterations (log scale) ----
+        masked_med = np.ma.masked_invalid(median_mat)
+        vmin_med = max(1, np.nanmin(median_mat)) if np.any(np.isfinite(median_mat)) else 1
+        vmax_med = max(1, np.nanmax(median_mat)) if np.any(np.isfinite(median_mat)) else 1
+        im1 = ax1.pcolormesh(
+            np.arange(len(MS) + 1) - 0.5,
+            np.arange(len(NS) + 1) - 0.5,
+            masked_med,
+            cmap="plasma", shading="flat",
+            norm=LogNorm(vmin=vmin_med, vmax=vmax_med),
+        )
+        for i in range(len(NS)):
+            for j in range(len(MS)):
+                val = median_mat[i, j]
+                if np.isfinite(val):
+                    ax1.text(j, i, f"{val:.0f}",
+                             ha="center", va="center", fontsize=8,
+                             color="white", fontweight="bold")
+                else:
+                    ax1.text(j, i, "·", ha="center", va="center",
+                             fontsize=14, color="gray")
+        ax1.set_xticks(range(len(MS)))
+        ax1.set_xticklabels([str(m) for m in MS])
+        ax1.set_yticks(range(len(NS)))
+        ax1.set_yticklabels([str(n) for n in NS])
+        ax1.set_xlabel("L-BFGS memory m")
+        ax1.set_ylabel("Segments N")
+        plt.colorbar(im1, ax=ax1, label="Median iterations")
+
+        # ---- Right panel: Success rate (linear 0–1) ----
+        masked_succ = np.ma.masked_invalid(success_mat)
+        im2 = ax2.pcolormesh(
+            np.arange(len(MS) + 1) - 0.5,
+            np.arange(len(NS) + 1) - 0.5,
+            masked_succ,
+            cmap="RdYlGn", shading="flat",
+            vmin=0, vmax=1,
+        )
+        for i in range(len(NS)):
+            for j in range(len(MS)):
+                val = success_mat[i, j]
+                if np.isfinite(val):
+                    # White text on dark (red) cells, black on light (green)
+                    text_color = "white" if val < 0.45 else "black"
+                    ax2.text(j, i, f"{val:.2f}",
+                             ha="center", va="center", fontsize=8,
+                             color=text_color, fontweight="bold")
+                else:
+                    ax2.text(j, i, "·", ha="center", va="center",
+                             fontsize=14, color="gray")
+        ax2.set_xticks(range(len(MS)))
+        ax2.set_xticklabels([str(m) for m in MS])
+        ax2.set_yticks(range(len(NS)))
+        ax2.set_yticklabels([str(n) for n in NS])
+        ax2.set_xlabel("L-BFGS memory m")
+        ax2.set_ylabel("Segments N")
+        plt.colorbar(im2, ax=ax2, label="Fraction converged")
+
+        fig.tight_layout()
+        savefigs(fig, f"agg_heatmap_{T_label}", subdir="agg_heatmaps")
+        plt.close(fig)
+        print(f"  Saved: agg_heatmap_{T_label}")
+
+    print(f"  Finished: {len(by_T)} T-group figures saved to {plots_dir() / 'agg_heatmaps'}")
 
 
 # ===========================================================================
@@ -884,10 +955,6 @@ PLOT_FUNCTIONS: Dict[str, Tuple[Callable[[List[RecurrenceData]], None], str]] = 
                 "Convergence curves per recurrence (‖F‖ vs iter, per N, varying m)"),
     "fig6":    (plot_fig6_iterations_heatmap,
                 "Iterations-to-convergence heatmap per recurrence (N×m grid)"),
-    "minN":    (plot_fig12a_min_N_vs_T,
-                "Minimum N to converge vs actual T, one line per m"),
-    "minM":    (plot_fig12b_min_m_vs_T,
-                "Minimum m to converge vs actual T, one line per N"),
     "maxiter": (plot_maxiter_vs_T,
                 "Max iterations (slowest converged combo) per recurrence vs T"),
     "best3":   (plot_best_combos_vs_T,
@@ -896,6 +963,10 @@ PLOT_FUNCTIONS: Dict[str, Tuple[Callable[[List[RecurrenceData]], None], str]] = 
                   "Number of converged (N,m) combos per recurrence"),
     "fastest": (plot_fastest_bar_annotated,
                 "Fastest converged (N,m) per recurrence — bars annotated with ID, T, (N,m); no colorbar"),
+    "fastest_by_T": (plot_fastest_bar_by_T,
+                     "Same as 'fastest' but one chart per T-target group (T05, T10, …)"),
+    "agg_heatmaps": (plot_agg_heatmaps,
+                     "Per-T aggregate heatmaps: median iterations (log) + success rate (0–1)"),
 }
 
 

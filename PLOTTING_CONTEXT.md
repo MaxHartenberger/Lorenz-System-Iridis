@@ -9,7 +9,7 @@
 python3 plot_results.py
 
 # Generate only specific plots
-python3 plot_results.py --plots convcount maxiter best3 minN minM
+python3 plot_results.py --plots convcount maxiter best3 fastest
 
 # Single per-recurrence plot on a subset (modify list in script)
 python3 plot_results.py --plots fig1
@@ -28,8 +28,8 @@ analysis/plots/
 │   └── fig01_T{target}_rec{id}.{pdf,png}
 ├── fig06_iterations_heatmap/    # Per-recurrence 7×7 (N×m) heatmaps
 │   └── fig06_T{target}_rec{id}.{pdf,png}
-├── fig12a_min_N_vs_T.{pdf,png}  # Min N to converge vs actual T (one line per m)
-├── fig12b_min_m_vs_T.{pdf,png}  # Min m to converge vs actual T (one line per N)
+├── agg_heatmaps/                # Per-T aggregate heatmaps (median iterations + success rate)
+│   └── agg_heatmap_{T_label}.{pdf,png}
 ├── maxiter_vs_T.{pdf,png}       # Max iterations (slowest converged) per recurrence
 ├── best3_combos_vs_T.{pdf,png}  # Max iterations + 3 best (N,m) overlaid
 ├── fastest_bar_annotated.{pdf,png} # Fastest converged per recurrence — bars annotated with ID, T, (N,m)
@@ -42,12 +42,12 @@ analysis/plots/
 |----------|------|-------------|
 | `fig1` | Convergence curves per recurrence | One figure per recurrence. Subplots = one per N where ≥1 m converged. Each subplot shows ‖F‖ vs iteration for all converged m values (semilogy). |
 | `fig6` | Iterations heatmap per recurrence | One figure per recurrence. 7×7 heatmap (N rows × m columns), annotated with iteration count (converged) or status symbol (✗/·). Log color scale. |
-| `minN` | Min N to converge vs T | Scatter/line plot: x = actual converged period T, y = minimum N that converged. One line per m value. |
-| `minM` | Min m to converge vs T | Scatter/line plot: x = actual converged period T, y = minimum m that converged. One line per N value. |
 | `maxiter` | Max iterations per recurrence | Column chart: x = recurrence (ordered by actual converged T), y = iterations of slowest converged (N,m). Color-coded by T. Log y-scale. |
 | `best3` | Best combos overlaid on maxiter | Same as maxiter but with the 3 fastest (N,m) combos shown as scatter markers. Annotated with (N,m) values. |
 | `fastest` | Fastest converged per recurrence | Column chart: x = recurrence, y = iterations of the fastest converged (N,m) combo. Light-grey bars annotated inside with orbit ID, final period T, and (N,m). No colorbar. |
+| `fastest_by_T` | Fastest bars split by T group | Same as `fastest` but produces one chart per T-target group (T05, T10, T20, T40, T80, T160). |
 | `convcount` | Convergence count per recurrence | Column chart: x = recurrence, y = number of converged combos (out of 49 max). Color-coded by T. |
+| `agg_heatmaps` | Aggregate per-T heatmaps | Two-panel figure per T group: (left) median iterations across recurrences (log scale), (right) success rate 0–1 across recurrences. 7×7 (N×m) grid. |
 
 ## Input Data Structure
 

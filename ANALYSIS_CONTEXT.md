@@ -4,7 +4,7 @@
 
 After the HPC sweep completes, `analysis/analyze_hpc_results.py` reads every
 per-iteration CSV produced by `hpc_worker.jl` and classifies each
-`(T, rec_id, N, m)` case into one of five statuses.  It then produces summary
+`(T, rec_id, N, m)` case into one of eight statuses.  It then produces summary
 tables, per-recurrence overviews, and a flat re-run list for any non-converged
 cases.  All analysis outputs are saved to the `analysis/` folder.
 
@@ -131,10 +131,11 @@ All outputs are saved to the `analysis/` folder (or a custom `--out-dir`):
 
 | File | Description |
 |------|-------------|
-| `status_matrix.csv` | Full T × (rec_id, N, m) MultiIndex CSV. Each cell is one of: `converged`, `no_data`, `incomplete`, `hit_maxiter`, `diverged` |
+| `status_matrix.csv` | Full T × (rec_id, N, m) MultiIndex CSV. Each cell is one of: `converged`, `no_data`, `incomplete`, `not_converged`, `hit_maxiter`, `diverged`, `crashed`, `error_should_be_converged` |
 | `status_summary.csv` | Counts of each status per T value |
 | `cases_to_rerun.csv` | Flat list of all non-converged cases (T, rec_id, N, m, status) |
 | `rec_overview.csv` | Per-recurrence overview: one row per (T, rec_id) with aggregated stats |
+| `best_pair_summary.csv` | Per-T summary of the (N,m) pair that is most often the fastest across recurrences |
 
 ### `rec_overview.csv` Columns
 
@@ -144,16 +145,42 @@ All outputs are saved to the `analysis/` folder (or a custom `--out-dir`):
 | `rec_id` | Recurrence candidate ID |
 | `converged` | "yes" if ANY (N,m) combo converged, else "no" |
 | `num_converged` | How many combos converged (out of 49) |
-| `num_diverged` | How many combos diverged |
-| `num_hit_maxiter` | How many combos hit maxiter |
-| `num_incomplete` | How many combos stopped early |
-| `num_no_data` | How many combos have no CSV |
+| `num_incomplete` | How many combos have incomplete/unparseable CSVs |
+| `num_not_converged` | How many combos stopped early without converging |
+| `num_hit_maxiter` | How many combos hit the iteration limit |
+| `num_diverged` | How many combos diverged (NaN in e_norm) |
+| `num_crashed` | How many combos crashed (exception in hpc_worker) |
+| `num_error_should_be_converged` | How many combos flagged # converged but e_norm > 1e-8 |
+| `num_no_data` | How many combos have no CSV file |
 | `best_N` / `best_m` | (N,m) of the converged combo with fewest iterations |
 | `best_iter` | Iteration count of that fastest combo |
 | `min_N_converged` | Smallest N that achieved convergence |
 | `min_m_converged` | Smallest m that achieved convergence |
 | `median_iter` | Median iterations among all converged combos for this recurrence |
 | `converged_T` | Placeholder column (NaN); user fills this in later with a manual check of whether the recurrence itself is a true periodic orbit |
+
+### `best_pair_summary.csv` Columns
+
+| Column | Description |
+|--------|-------------|
+| `T` | Target period group (T05, T10, T20, T40, T80, T160) |
+| `best_N` | Number of shooting segments of the modal-best pair |
+| `best_m` | L-BFGS memory of the modal-best pair |
+| `win_count` | How many recurrences this (N,m) was the fastest (fewest iterations) |
+| `total_recs_with_converged` | Total recurrences in this T group with ≥1 converged combo |
+| `win_fraction` | `win_count / total_recs_with_converged` — how dominant this pair is |
+| `runner_up_N` / `runner_up_m` | The second-most-frequent best pair |
+| `runner_up_wins` | How many recurrences the runner-up won |
+
+### Tie-Breaking Convention
+
+When two or more (N,m) combinations have the **same number of iterations** for
+a given recurrence, the one with the **lower m** (L-BFGS memory) is preferred
+as the "best" combo.  This rule is applied consistently across:
+
+- `rec_overview.csv`  — `best_N` / `best_m` columns
+- `best_pair_summary.csv`  — `best_N` / `best_m` columns
+- All plot functions in `plot_results.py` that identify the fastest combo
 
 ---
 

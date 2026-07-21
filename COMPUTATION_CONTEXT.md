@@ -28,11 +28,13 @@ generate_task_list.jl
     ↓
 tasks.txt  (one line per case:  T rec_id N m)
     ↓
-first_sweep.slurm  +  hpc_worker.jl
+submit_sweep.slurm  +  hpc_worker.jl
     ↓
-output/TXX/data_lbfgs/recXXX/NXX_mXX.csv  (per-iteration history)
+outputs/TXX/data_lbfgs/recXXX/iteration/NXX_mXX.csv  (per-iteration history)
     ↓   final line of each CSV:
     # converged  |  # did_not_converge  |  # crashed
+    ↓   (if converged)
+outputs/TXX/data_lbfgs/recXXX/trajectory/NXX_mXX_trajectory.csv  (phase-space trajectory)
 ```
 
 ---
@@ -44,7 +46,7 @@ output/TXX/data_lbfgs/recXXX/NXX_mXX.csv  (per-iteration history)
 | `scripts/find_recurrences.jl` | Finds near-recurrence candidates; saves to `recurrences/` |
 | `scripts/generate_task_list.jl` | Creates `tasks.txt` — one line per `(T, rec_id, N, m)` |
 | `scripts/hpc_worker.jl` | Runs ONE case: `julia hpc_worker.jl <T> <rec_id> <N> <m>` |
-| `first_sweep.slurm` | SLURM job array: reads a task chunk file, runs `hpc_worker.jl` |
+| `archive/submit_sweep.slurm` | SLURM job array: reads `tasks.txt` by `$SLURM_ARRAY_TASK_ID`, runs `hpc_worker.jl` |
 | `test_one_run.slurm` | Minimal SLURM script for a single test case (no array) |
 
 ---
@@ -77,27 +79,33 @@ segments (N < 10) and small L-BFGS memory (m < 10) are known to diverge or
 fail to converge. Filtering them out saves compute time and avoids unnecessary
 `# did_not_converge` results.
 
-### 2. Split and submit
+### 2. Submit
 
-The script prints exact commands. Example for ~14,700 tasks (T05, T10, T20):
+Submit the job array directly (it reads `tasks.txt` by line number):
+
+```bash
+# Count total tasks and submit:
+NTASKS=$(wc -l < tasks.txt)
+sbatch --array=1-$NTASKS archive/submit_sweep.slurm
+```
+
+**Why this works:** Iridis `MaxArraySize=1001` caps the task ID index, not just
+the count. If you have more than 1000 tasks, split `tasks.txt` into separate
+chunk files and submit separate arrays for each:
 
 ```bash
 split -d -l 1000 tasks.txt chunk_
-sbatch --array=1-1000 first_sweep.slurm chunk_00
-sbatch --array=1-1000 first_sweep.slurm chunk_01
-# ... up to chunk_14
+# Submit one array per chunk file (edit submit_sweep.slurm's TASKS_FILE to point to each chunk)
+sbatch --array=1-1000 archive/submit_sweep.slurm   # with TASKS_FILE=chunk_00
+sbatch --array=1-500 archive/submit_sweep.slurm    # with TASKS_FILE=chunk_01
 ```
-
-**Why split?** Iridis `MaxArraySize=1001` caps the task ID index, not just the
-count. `--array=1001-2000` is rejected because index 2000 > 1001. Splitting
-into files of ≤1000 lines and using `--array=1-1000` for each avoids this.
 
 ### 3. Monitor
 
 ```bash
 squeue -u $USER                          # all your jobs
-grep -r '# converged' output/ | wc -l    # how many converged
-grep -r '# crashed' output/ | wc -l      # how many crashed
+grep -r '# converged' outputs/ | wc -l   # how many converged
+grep -r '# crashed' outputs/ | wc -l     # how many crashed
 ```
 
 ---
@@ -105,36 +113,52 @@ grep -r '# crashed' output/ | wc -l      # how many crashed
 ## Output Structure
 
 ```
-output/
-├── T05/data_lbfgs/rec001/N05_m05.csv
-│                  N05_m10.csv
-│                  ...
-│           rec002/...
-├── T10/data/...
-└── T20/data/...
+outputs/
+├── logs/                          # SLURM .out / .err per array task
+│   ├── sweep_<jobid>_<taskid>.out
+│   └── sweep_<jobid>_<taskid>.err
+│
+├── T05/data_lbfgs/
+│   ├── rec001/
+│   │   ├── iteration/             # ← per-iteration L-BFGS history
+│   │   │   ├── N05_m05.csv
+│   │   │   ├── N05_m10.csv
+│   │   │   └── ...  (49 combos: 7 N × 7 m)
+│   │   └── trajectory/            # ← converged-orbit phase-space data
+│   │       ├── N05_m05_trajectory.csv   (only if converged)
+│   │       └── ...
+│   └── rec002/...
+├── T10/data_lbfgs/...
+└── T20/data_lbfgs/...
 ```
 
-Each CSV has columns: `iter, e_norm, grad_norm, lambda, T_curr`
+### CSV Formats
+
+**Iteration CSV** (`iteration/NXX_mXX.csv`):
+```
+iter,e_norm,grad_norm,lambda,T_curr
+0,3.7941945225620959e-03,...
+...
+758,9.8605768907545449e-09,...,5.369891
+# converged
+```
+
+**Trajectory CSV** (`trajectory/NXX_mXX_trajectory.csv`) — only present for converged cases:
+```
+t,x,y,z,segment
+0.0000000000e+00,4.7397090703043219e+00,1.1538803179091690e+00,2.7773011046743786e+01,1
+...
+```
+
+Each iteration CSV has columns: `iter, e_norm, grad_norm, lambda, T_curr`
 
 The last line is a comment: `# converged`, `# did_not_converge`, or `# crashed`.
 
-SLURM logs: `logs/sweep_<jobid>_<taskid>.out` and `.err`
+Each trajectory CSV has columns: `t, x, y, z, segment` — one row per Δt = 0.01
+step along the converged periodic orbit, with `segment` ∈ {1, …, N}.
 
 ---
 
-## ⚠️ Inode Warning
-
-A full sweep (6 T values × 100 recs × 49 (N,m) combos) produces ~29,000 CSV
-files — nearly 20% of the `/home` inode quota (160,000).  Use `--output-dir`
-to route CSVs to `/scratch`:
-
-```bash
-julia scripts/hpc_worker.jl ... --output-dir /scratch/$USER/output
-```
-
-Scratch has 500,000 inodes — plenty of headroom.
-
----
 
 ## Single Test Run
 
@@ -143,5 +167,5 @@ To test one case before a full sweep:
 ```bash
 sbatch test_one_run.slurm
 # → runs hpc_worker.jl 5.0 1 5 5
-# → output in output/T05/data_lbfgs/rec001/N05_m05.csv
+# → output in outputs/T05/data_lbfgs/rec001/iteration/N05_m05.csv
 ```

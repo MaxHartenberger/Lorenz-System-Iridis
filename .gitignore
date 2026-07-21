@@ -3,14 +3,12 @@
 # ============================================================================ #
 
 # --- Generated / runtime artefacts ----------------------------------------- #
-/output/
 /plots/
 /plots_old/
 /logs/
 tasks.txt
 rec_tasks.txt
 /test
-/outputs
 
 
 # --- Julia artefacts -------------------------------------------------------- #
@@ -28,13 +26,11 @@ Thumbs.db
 .vscode/
 
 # --- Exclude legacy / scratch scripts --------------------------------------- #
-/scripts/old/
-/lorenz-results/
-/lorenz-results-old/
 /archive
 
 # --- Python artefacts -------------------------------------------------------- #
 __pycache__/
 
-# --- Exclude plots ----------------------------------------------------- #
+# --- Exclude plots and outputs----------------------------------------------------- #
 /analysis/plots/
+/outputs/
