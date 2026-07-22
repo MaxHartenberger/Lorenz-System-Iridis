@@ -460,7 +460,7 @@ candidates (ranked by recurrence distance, closest first), with the columns:
 \end{table}
 
 % ============================================================================
-\section{Multiple Shooting for Periodic Orbits}
+\section{Multiple Shooting for Periodic Orbits}\label{sec:multiple_shooting}
 % ============================================================================
 
 \subsection{Motivation}
@@ -1229,6 +1229,53 @@ other dynamical systems by replacing the Lorenz-specific flow and
 linearisation operators.
 
 % ============================================================================
+\section{Outlook and Future Work}
+% ============================================================================
+
+The present work demonstrates a robust, scalable pipeline for computing
+periodic orbits of the Lorenz system.  Several natural extensions present
+themselves.
+
+\subsection{Application to Other Fluid-Dynamical Systems}
+The pipeline is modular: the recurrence finder, the multiple-shooting
+formulation, and the L-BFGS optimiser are agnostic to the specific dynamical
+system.  Only the flow operators $\varphi$, $\Phi$, and $\Psi$ need to be
+replaced.  A natural next target is the \textbf{Open Kolmogorov Flow}
+(OKF)~\cite{chandler2022open}, a two-dimensional, doubly-periodic,
+spatially-extended Navier--Stokes configuration that exhibits a rich
+hierarchy of exact coherent structures including travelling waves, periodic
+orbits, and relative periodic orbits.
+
+\subsection{Computational-Time Callbacks and Algorithm Comparison}
+A natural question is how L-BFGS compares with other solvers available in
+NKSearch.jl, particularly the \textbf{Newton--GMRES Hookstep}
+(trust-region) method~\cite{sanchez2004newton}.  The hookstep method solves
+$J(z)\,\delta z = -F(z)$ matrix-free at each Newton iteration: GMRES
+approximately solves the linear system, and the step is constrained to lie
+within a trust region of radius $\Delta$.  Unlike L-BFGS, the hookstep
+method does not require adjoint integration (only the forward linearised
+flow $\Phi$), making each iteration computationally cheaper.  However, it
+typically requires more iterations to converge because the trust-region
+constraint limits the step size, and the GMRES tolerance must be carefully
+balanced against the outer Newton tolerance.
+
+To compare these methods fairly, one needs a \textbf{computational-time
+callback} in NKSearch.jl that records the elapsed CPU (or wall-clock) time
+at each iteration alongside the residual norm.  Such a callback is
+orthogonal to the existing per-iteration logging --- it adds a time-stamp
+column to the CSV output, enabling plots of $\|F(z)\|$ versus
+\textit{compute time} rather than iteration count.  This would allow
+questions such as ``which method reaches $\|F\| = 10^{-6}$ in the shortest
+wall-clock time?'' to be answered quantitatively.  A preliminary comparison
+on the Open Kolmogorov Flow system would be particularly instructive, since
+the higher state-space dimension of OKF (hundreds to thousands of degrees of
+freedom, versus three for Lorenz) amplifies the cost difference between
+adjoint-based and adjoint-free methods.  The callback would also record the
+time spent in each computational phase (residual evaluation, gradient
+computation, GMRES iterations, line search), yielding a detailed performance
+profile.
+
+% ============================================================================
 % Bibliography
 % ============================================================================
 \begin{thebibliography}{9}
@@ -1259,6 +1306,12 @@ J.~S\'{a}nchez, M.~Net, B.~Garc\'{i}a-Archilla, and C.~Sim\'{o}.
 D.~Viswanath.
 \newblock Recurrent motions within plane Couette turbulence.
 \newblock \emph{Journal of Fluid Mechanics}, 580:339--358, 2007.
+
+\bibitem{chandler2022open}
+G.~J.~Chandler and R.~R.~Kerswell.
+\newblock Invariant recurrent solutions embedded in a turbulent
+         two-dimensional Kolmogorov flow.
+\newblock \emph{Journal of Fluid Mechanics}, 722:554--595, 2013.
 
 \bibitem{liu1989limited}
 D.~C.~Liu and J.~Nocedal.
