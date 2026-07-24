@@ -28,7 +28,7 @@ generate_task_list.jl
     ↓
 tasks.txt  (one line per case:  T rec_id N m)
     ↓
-submit_sweep.slurm  +  hpc_worker.jl
+hpc_worker.jl  (submitted via SLURM job array, one task per line in tasks.txt)
     ↓
 outputs/TXX/data_lbfgs/recXXX/iteration/NXX_mXX.csv  (per-iteration history)
     ↓   final line of each CSV:
@@ -46,7 +46,6 @@ outputs/TXX/data_lbfgs/recXXX/trajectory/NXX_mXX_trajectory.csv  (phase-space tr
 | `scripts/find_recurrences.jl` | Finds near-recurrence candidates; saves to `recurrences/` |
 | `scripts/generate_task_list.jl` | Creates `tasks.txt` — one line per `(T, rec_id, N, m)` |
 | `scripts/hpc_worker.jl` | Runs ONE case: `julia hpc_worker.jl <T> <rec_id> <N> <m>` |
-| `archive/submit_sweep.slurm` | SLURM job array: reads `tasks.txt` by `$SLURM_ARRAY_TASK_ID`, runs `hpc_worker.jl` |
 | `test_one_run.slurm` | Minimal SLURM script for a single test case (no array) |
 
 ---
@@ -81,12 +80,15 @@ fail to converge. Filtering them out saves compute time and avoids unnecessary
 
 ### 2. Submit
 
-Submit the job array directly (it reads `tasks.txt` by line number):
+Submit the job array via a SLURM script that reads `tasks.txt` by line number
+(create your own `submit_sweep.slurm` based on `test_one_run.slurm` as a template,
+adding `#SBATCH --array=1-$NTASKS` and using `$SLURM_ARRAY_TASK_ID` to index into
+the task file).
 
 ```bash
 # Count total tasks and submit:
 NTASKS=$(wc -l < tasks.txt)
-sbatch --array=1-$NTASKS archive/submit_sweep.slurm
+sbatch --array=1-$NTASKS submit_sweep.slurm
 ```
 
 **Why this works:** Iridis `MaxArraySize=1001` caps the task ID index, not just
@@ -96,8 +98,8 @@ chunk files and submit separate arrays for each:
 ```bash
 split -d -l 1000 tasks.txt chunk_
 # Submit one array per chunk file (edit submit_sweep.slurm's TASKS_FILE to point to each chunk)
-sbatch --array=1-1000 archive/submit_sweep.slurm   # with TASKS_FILE=chunk_00
-sbatch --array=1-500 archive/submit_sweep.slurm    # with TASKS_FILE=chunk_01
+sbatch --array=1-1000 submit_sweep.slurm   # with TASKS_FILE=chunk_00
+sbatch --array=1-500 submit_sweep.slurm    # with TASKS_FILE=chunk_01
 ```
 
 ### 3. Monitor

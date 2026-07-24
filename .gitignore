@@ -27,6 +27,7 @@ Thumbs.db
 
 # --- Exclude legacy / scratch scripts --------------------------------------- #
 /archive
+scripts/archive
 
 # --- Python artefacts -------------------------------------------------------- #
 __pycache__/

@@ -27,28 +27,23 @@
 \maketitle
 
 \begin{abstract}
-This report presents a computational pipeline for discovering periodic
-orbits of the Lorenz system at classical parameters ($\sigma=10$, $\rho=28$,
-$\beta=8/3$).  The approach proceeds in two stages.  First, candidate orbits
-are identified as \emph{near-recurrences} --- close returns of a long
-numerically integrated trajectory --- using a streaming distance-matrix
-method that scans narrow time windows around six target periods
-$T \in \{5,10,20,40,80,160\}$.  Second, each candidate is refined to a true
-periodic orbit via L-BFGS minimisation of a multiple-shooting residual,
-with the number of shooting segments $N$ and the L-BFGS memory depth $m$
-varied over a $7\times7$ factorial grid ($N,m \in \{5,10,20,40,80,160,320\}$).
-The resulting $\sim$29,000 independent optimisation cases are deployed as an
-embarrassingly parallel workload on the Iridis~X HPC cluster via SLURM job
-arrays.  A systematic post-processing pipeline classifies every case and
-generates diagnostic plots (convergence curves, iteration heatmaps, and
-aggregate bar charts).  We identify the best $(N,m)$ pair for each target
-period and find that short-period orbits ($T \le 20$) converge with
-$>\!99\%$ success rate using as few as $N=5$ segments, while longer orbits
-require proportionally larger $N$ and consistently benefit from the maximal
-L-BFGS memory $m=320$.  The complete pipeline --- implemented in Julia using
-\texttt{ToySystems.jl}, \texttt{StreamingRecurrenceAnalysis.jl}, and
-\texttt{NKSearch.jl} --- is available at
-\url{https://github.com/MaxHartenberger/Lorenz-System-Iridis}.
+This report presents a computational pipeline for discovering unstable
+periodic orbits of the Lorenz system at classical parameters
+($\sigma=10$, $\rho=28$, $\beta=8/3$).  Candidate orbits are identified
+as \emph{near-recurrences} --- close returns of a long numerically
+integrated trajectory --- and then refined to machine precision via
+L-BFGS minimisation of a multiple-shooting residual.  A full factorial
+sweep over the number of shooting segments $N$ and the L-BFGS memory
+depth $m$ ($7\times7$ grid, $\sim$29,000 independent cases) is deployed
+on the Iridis~X HPC cluster using SLURM job arrays.  We find that
+short-period orbits ($T \le 20$) converge with $>\!99\%$ success rate
+using as few as $N=5$ segments --- demonstrating that near-recurrences
+provide excellent initial guesses.  For longer periods the optimal $N$
+scales with $T$ so that the per-segment integration time remains below
+the Lyapunov time, and the maximal L-BFGS memory $m=320$ is
+universally beneficial.  The best $(N,m)$ pair is tabulated for each
+target period, giving practitioners a concrete starting point for
+periodic-orbit searches in the Lorenz system and beyond.
 \end{abstract}
 
 % ============================================================================
@@ -1265,7 +1260,7 @@ at each iteration alongside the residual norm.  Such a callback is
 orthogonal to the existing per-iteration logging --- it adds a time-stamp
 column to the CSV output, enabling plots of $\|F(z)\|$ versus
 \textit{compute time} rather than iteration count.  This would allow
-questions such as ``which method reaches $\|F\| = 10^{-6}$ in the shortest
+questions such as ``which method reaches $\|F\| = 10^{-8}$ in the shortest
 wall-clock time?'' to be answered quantitatively.  A preliminary comparison
 on the Open Kolmogorov Flow system would be particularly instructive, since
 the higher state-space dimension of OKF (hundreds to thousands of degrees of
@@ -1288,7 +1283,7 @@ E.~N.~Lorenz.
 \bibitem{cvitanovic2016chaos}
 P.~Cvitanovi\'{c}, R.~Artuso, R.~Mainieri, G.~Tanner, and G.~Vattay.
 \newblock \emph{Chaos: Classical and Quantum}.
-\newblock Niels Bohr Institute, Copenhagen, 2016.
+\newblock Niels Bohr Institute, Copenhagen, 2012.
 \newblock \url{http://chaosbook.org/}
 
 \bibitem{nocedal2006numerical}
@@ -1301,11 +1296,6 @@ J.~S\'{a}nchez, M.~Net, B.~Garc\'{i}a-Archilla, and C.~Sim\'{o}.
 \newblock Newton--Krylov continuation of periodic orbits for Navier--Stokes
          flows.
 \newblock \emph{Journal of Computational Physics}, 201(1):13--33, 2004.
-
-\bibitem{viswanath2007recurrent}
-D.~Viswanath.
-\newblock Recurrent motions within plane Couette turbulence.
-\newblock \emph{Journal of Fluid Mechanics}, 580:339--358, 2007.
 
 \bibitem{chandler2022open}
 G.~J.~Chandler and R.~R.~Kerswell.

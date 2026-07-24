@@ -2,7 +2,7 @@
 
 ## What This Analysis Does
 
-After the HPC sweep completes, `analysis/analyze_hpc_results.py` reads every
+After the HPC sweep completes, `scripts/analyze_hpc_results.py` reads every
 per-iteration CSV produced by `hpc_worker.jl` and classifies each
 `(T, rec_id, N, m)` case into one of eight statuses.  It then produces summary
 tables, per-recurrence overviews, and a flat re-run list for any non-converged
@@ -188,16 +188,16 @@ as the "best" combo.  This rule is applied consistently across:
 
 ```bash
 # From the repo root, with default paths:
-python analysis/analyze_hpc_results.py
+python scripts/analyze_hpc_results.py
 
-# From the analysis folder:
-cd analysis && python analyze_hpc_results.py
+# From the scripts folder:
+cd scripts && python analyze_hpc_results.py
 
 # With custom output directory:
-python analysis/analyze_hpc_results.py --out-dir ./my-analysis
+python scripts/analyze_hpc_results.py --out-dir ./my-analysis
 
 # Specifying a different results directory:
-python analysis/analyze_hpc_results.py --results ./outputs
+python scripts/analyze_hpc_results.py --results ./outputs
 ```
 
 ---
@@ -206,7 +206,7 @@ python analysis/analyze_hpc_results.py --results ./outputs
 
 When trajectory CSVs are available for converged cases, the analysis can be
 extended to plot the orbits.  See the `plot_trajectory()` function in
-`analysis/analyze_hpc_results.py` (currently a dummy/stub):
+`scripts/analyze_hpc_results.py` (currently a dummy/stub):
 
 - Plot 3D phase-space trajectory (x, y, z) colored by segment
 - Overlay the shooting points (segment start positions)
@@ -232,7 +232,7 @@ pip install numpy pandas
 COMPUTATION_CONTEXT.md             ANALYSIS_CONTEXT.md (this file)
         │                                   │
         ▼                                   ▼
-scripts/find_recurrences.jl         analysis/analyze_hpc_results.py
+scripts/find_recurrences.jl         scripts/analyze_hpc_results.py
         │                                   │
         ▼                                   ▼
 scripts/generate_task_list.jl       Reads outputs/*/data_lbfgs/rec*/iteration/*.csv
@@ -255,7 +255,7 @@ outputs/ (CSV files)                analysis/rec_overview.csv
 - The `converged_T` column in `rec_overview.csv` is intentionally left NaN
   for the user to fill in after manually inspecting which recurrences
   correspond to true periodic orbits of the Lorenz system.
-- The script lives in `analysis/analyze_hpc_results.py` and by default reads
+- The script lives in `scripts/analyze_hpc_results.py` and by default reads
   from `../outputs` and writes outputs to `analysis/`.
 - For the old "new vs old" comparison workflow, see the git history of
   `analyze_hpc_results.py` — this is no longer needed.
